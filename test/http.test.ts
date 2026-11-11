@@ -34,6 +34,8 @@ test("health check abierto y sin datos; rutas desconocidas 404", async () => {
   const r = await rpc({}, {}, "/healthz", "GET");
   assert.equal(r.status, 200); assert.deepEqual(await r.json(), { status: "ok" });
   assert.equal((await rpc({}, {}, "/otra", "GET")).status, 404);
+  const ready = await rpc({}, {}, "/readyz", "GET");
+  assert.equal(ready.status, 200); assert.deepEqual(await ready.json(), { status: "ready" });
 });
 
 test("sin token o con token incorrecto: 401, y nunca se ejecuta nada", async () => {

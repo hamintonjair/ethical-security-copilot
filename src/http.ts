@@ -39,6 +39,7 @@ export function createHttpApp(o: HttpOptions): http.Server {
       if (!hosts.has(host)) return send(res, 403, { error: "HOST_NOT_ALLOWED" });
       const path = (req.url ?? "").split("?")[0];
       if (path === "/healthz") return send(res, 200, { status: "ok" }); // sin datos; solo para el health check de la plataforma
+      if (path === "/readyz") return (await o.store.ping()) ? send(res, 200, { status: "ready" }) : send(res, 503, { status: "db_unavailable" }); // sin detalles del error
       if (path !== "/mcp") return send(res, 404, { error: "NOT_FOUND" });
 
       const m = /^Bearer (.+)$/.exec(String(req.headers.authorization ?? ""));

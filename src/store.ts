@@ -20,6 +20,8 @@ export class Store {
     return new Store(await openDb(target), signingKey);
   }
   close() { return this.db.close(); }
+  /** Comprobación de disponibilidad: consulta mínima, no devuelve datos. */
+  async ping(): Promise<boolean> { try { await this.db.query("select 1"); return true; } catch { return false; } }
 
   /* ---------- Auditoría (hash chain) ---------- */
   async audit(e: { actor: string; role: Role; action: string; assessmentId?: string | null; decisionId?: string | null; payload?: unknown; ts?: string }) {
