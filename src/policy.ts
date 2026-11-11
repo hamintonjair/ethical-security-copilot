@@ -41,7 +41,7 @@ export class PolicyEngine implements IPolicyEngine {
   async check(req: Req): Promise<Decision> {
     const reasons = await this.evaluate(req);
     const decisionId = randomUUID();
-    this.store.audit({
+    await this.store.audit({
       actor: req.actor, role: req.actor, action: `policy:${reasons.length ? "deny" : "allow"}`,
       assessmentId: req.assessmentId, decisionId,
       payload: { module: req.module, mode: req.mode, target: req.target, reasons },
@@ -58,8 +58,8 @@ export class PolicyEngine implements IPolicyEngine {
   resolve(host: string): Promise<string[]> { return isIP(host) ? Promise.resolve([host]) : this.resolver(host); }
 
   /** Valida las IP finales a las que se conectará el Gateway (anti DNS-rebinding / TOCTOU). */
-  verifyIps(assessmentId: string, mode: Req["mode"], ips: string[]): Deny | null {
-    const rec = this.store.getAssessment(assessmentId);
+  async verifyIps(assessmentId: string, mode: Req["mode"], ips: string[]): Promise<Deny | null> {
+    const rec = await this.store.getAssessment(assessmentId);
     if (!rec || !rec.signatureValid || !ips.length) return "DNS_RESOLVES_OUT_OF_SCOPE";
     const excl = rec.a.exclusions.flatMap(e => (e.target ? [e.target] : []));
     for (const ip of ips) {
@@ -71,14 +71,14 @@ export class PolicyEngine implements IPolicyEngine {
   }
 
   /** scope_validate: consulta pura (sin consumir aprobación ni rate limit). */
-  validateScope(assessmentId: string, target: Target, actor: Req["actor"]): { authorized: boolean; reasons: Deny[] } {
+  async validateScope(assessmentId: string, target: Target, actor: Req["actor"]): Promise<{ authorized: boolean; reasons: Deny[] }> {
     let reasons: Deny[] = [];
-    const rec = this.store.getAssessment(assessmentId);
+    const rec = await this.store.getAssessment(assessmentId);
     if (!rec) reasons = ["NO_ACTIVE_ASSESSMENT"];
     else if (!rec.signatureValid) reasons = ["SIGNATURE_INVALID"];
     else if (!targetMatches(target, rec.a.scope)) reasons = ["TARGET_OUT_OF_SCOPE"];
     else if (rec.a.exclusions.some(e => e.target && (targetMatches(target, [e.target]) || this.overlaps(target, e.target)))) reasons = ["TARGET_EXCLUDED"];
-    this.store.audit({ actor, role: actor, action: "scope_validate", assessmentId, payload: { target, reasons } });
+    await this.store.audit({ actor, role: actor, action: "scope_validate", assessmentId, payload: { target, reasons } });
     return { authorized: reasons.length === 0, reasons };
   }
 
@@ -86,10 +86,10 @@ export class PolicyEngine implements IPolicyEngine {
   private async evaluate(req: Req): Promise<Deny[]> {
     try {
       // 1. Kill switch
-      if (this.store.killSwitchActive()) return ["KILL_SWITCH_ACTIVE"];
+      if (await this.store.killSwitchActive()) return ["KILL_SWITCH_ACTIVE"];
 
       // 2. Autorización existente y firma íntegra
-      const rec = this.store.getAssessment(req.assessmentId);
+      const rec = await this.store.getAssessment(req.assessmentId);
       if (!rec) return ["NO_ACTIVE_ASSESSMENT"];
       if (!rec.signatureValid) return ["SIGNATURE_INVALID"];
       const a = rec.a;
@@ -129,7 +129,7 @@ export class PolicyEngine implements IPolicyEngine {
       // 10. Aprobación humana: obligatoria en modo activo y en toda prueba que cambie estado
       if (!(req as any)._preApproved && (req.mode === "active" || req.changesState || manifest?.changesState)) {
         if (!req.planId || !req.approvalToken) return ["APPROVAL_REQUIRED"];
-        if (!this.store.consumeApproval(req.planId, req.approvalToken, { assessmentId: req.assessmentId, moduleId: req.module, target: req.target })) return ["APPROVAL_REQUIRED"];
+        if (!(await this.store.consumeApproval(req.planId, req.approvalToken, { assessmentId: req.assessmentId, moduleId: req.module, target: req.target }))) return ["APPROVAL_REQUIRED"];
       }
 
       // 11. Rate limiting y tope de peticiones (se consume una unidad por decisión permitida)

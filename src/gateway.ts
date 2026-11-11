@@ -27,7 +27,7 @@ export class Gateway {
     if (!d.allow) throw new GatewayDenied(d.reasons);
     const host = hostOf(target)!;
     const ips = await this.policy.resolve(host);
-    const bad = this.policy.verifyIps(g.assessmentId, g.mode, ips);
+    const bad = await this.policy.verifyIps(g.assessmentId, g.mode, ips);
     if (bad) throw new GatewayDenied([bad]);
     return ips;
   }

@@ -49,13 +49,13 @@ async function boot(role: "agent" | "authorizer", store: Store) {
 }
 
 test("las 6 herramientas MCP están publicadas", async () => {
-  const { client } = await boot("agent", new Store(":memory:", KEY));
+  const { client } = await boot("agent", await Store.open("memory", KEY));
   const names = (await client.listTools()).tools.map(t => t.name).sort();
   assert.deepEqual(names, ["assessment_create", "finding_create", "report_generate", "scan_initiate", "scan_stop", "scope_validate"]);
 });
 
 test("el LLM no puede crear autorizaciones; el authorizer sí", async () => {
-  const store = new Store(":memory:", KEY);
+  const store = await Store.open("memory", KEY);
   const agent = await boot("agent", store);
   const denied = await agent.call("assessment_create", assessmentInput());
   assert.equal(denied.isError, true); assert.equal(denied.data.error, "ROLE_NOT_ALLOWED");
@@ -65,8 +65,8 @@ test("el LLM no puede crear autorizaciones; el authorizer sí", async () => {
 });
 
 test("ciclo completo: pasivo → laboratorio → activo con aprobación → hallazgos → reporte → kill switch", async () => {
-  const store = new Store(":memory:", KEY);
-  const a = store.createAssessment(assessmentInput(), "ana");
+  const store = await Store.open("memory", KEY);
+  const a = await store.createAssessment(assessmentInput(), "ana");
   const id = a.id;
   const agent = await boot("agent", store);
   const host = `http://127.0.0.1:${vulnPort}`;
@@ -76,7 +76,7 @@ test("ciclo completo: pasivo → laboratorio → activo con aprobación → hall
   assert.equal(r.data.status, "denied"); assert.deepEqual(r.data.denials[0].reasons, ["STATE_TRANSITION_INVALID"]);
 
   // Un humano avanza el ciclo (canal separado del LLM)
-  for (const s of ["scope_validated", "planned", "approved"] as const) assert.ok(store.transition(id, s, "ana", "authorizer"));
+  for (const s of ["scope_validated", "planned", "approved"] as const) assert.ok(await store.transition(id, s, "ana", "authorizer"));
 
   // scope_validate
   assert.equal((await agent.call("scope_validate", { assessmentId: id, target: { type: "ip", value: "127.0.0.5" } })).data.authorized, true);
@@ -124,8 +124,8 @@ test("ciclo completo: pasivo → laboratorio → activo con aprobación → hall
   const planId = r.data.planId;
   r = await agent.call("scan_initiate", { assessmentId: id, moduleId: "tcp_port_check", mode: "active", targets: [t], params: { ports: String(openPort) }, planId, approvalToken: "inventado" });
   assert.equal(r.data.status, "denied");
-  assert.throws(() => store.approvePlan(planId, "llm", "agent"));
-  const token = store.approvePlan(planId, "oscar", "operator");
+  await assert.rejects(() => store.approvePlan(planId, "llm", "agent"));
+  const token = await store.approvePlan(planId, "oscar", "operator");
   // El token no sirve para otros objetivos del mismo plan
   r = await agent.call("scan_initiate", { assessmentId: id, moduleId: "tcp_port_check", mode: "active", targets: [{ type: "ip", value: "127.0.0.2" }], params: { ports: "80" }, planId, approvalToken: token });
   assert.equal(r.data.status, "denied");
@@ -138,7 +138,7 @@ test("ciclo completo: pasivo → laboratorio → activo con aprobación → hall
   const w = { type: "url", value: `${host}/` };
   r = await agent.call("scan_initiate", { assessmentId: id, moduleId: "lab_write_probe", mode: "lab", targets: [w] });
   assert.equal(r.data.status, "pending_approval");
-  const tok2 = store.approvePlan(r.data.planId, "oscar", "operator");
+  const tok2 = await store.approvePlan(r.data.planId, "oscar", "operator");
   r = await agent.call("scan_initiate", { assessmentId: id, moduleId: "lab_write_probe", mode: "lab", targets: [w], planId: r.data.planId, approvalToken: tok2 });
   assert.equal(r.data.status, "completed");
   assert.ok(hits.some(h => h.startsWith("POST")));
@@ -158,16 +158,16 @@ test("ciclo completo: pasivo → laboratorio → activo con aprobación → hall
   assert.ok(md.includes("### Hechos observados") && md.includes("### Hipótesis de riesgo"));
   assert.ok(!md.includes("root@demo.test") && !md.includes("abcdefghijklmnop12345"), "el reporte no filtra PII ni tokens");
   assert.ok(md.includes("Divulgación de versión") && !md.includes("Hipótesis sin verificar"), "por defecto solo hallazgos confirmados");
-  assert.equal(store.getAssessment(id)!.a.state, "reported");
+  assert.equal((await store.getAssessment(id))!.a.state, "reported");
 
   // Auditoría íntegra al final
-  assert.deepEqual(store.verifyAuditChain(), { ok: true });
+  assert.deepEqual(await store.verifyAuditChain(), { ok: true });
 });
 
 test("kill switch: aborta un escaneo en curso y bloquea todo después", async () => {
-  const store = new Store(":memory:", KEY);
-  const a = store.createAssessment(assessmentInput(), "ana");
-  for (const s of ["scope_validated", "planned", "approved"] as const) store.transition(a.id, s, "ana", "authorizer");
+  const store = await Store.open("memory", KEY);
+  const a = await store.createAssessment(assessmentInput(), "ana");
+  for (const s of ["scope_validated", "planned", "approved"] as const) await store.transition(a.id, s, "ana", "authorizer");
   const agent = await boot("agent", store);
   const slow = agent.call("scan_initiate", { assessmentId: a.id, moduleId: "http_header_audit", mode: "lab", targets: [{ type: "url", value: `http://127.0.0.1:${vulnPort}/slow` }] });
   await new Promise(r => setTimeout(r, 300));
@@ -179,6 +179,6 @@ test("kill switch: aborta un escaneo en curso y bloquea todo después", async ()
   assert.ok(["aborted", "denied"].includes(res.data.status));
   const after = await agent.call("scan_initiate", { assessmentId: a.id, moduleId: "config_audit", mode: "passive", targets: [{ type: "ip", value: "127.0.0.1" }], params: { content: "x" } });
   assert.ok(JSON.stringify(after.data).includes("KILL_SWITCH_ACTIVE"));
-  assert.throws(() => store.releaseKillSwitch("llm", "agent"));
-  assert.deepEqual(store.verifyAuditChain(), { ok: true });
+  await assert.rejects(() => store.releaseKillSwitch("llm", "agent"));
+  assert.deepEqual(await store.verifyAuditChain(), { ok: true });
 });

@@ -28,9 +28,9 @@ export function createServer(deps: ServerDeps) {
   const server = new McpServer({ name: "ethical-security-copilot", version: "0.1.0" });
 
   /** Permiso por rol: el rol lo fija quien lanza el servidor, nunca el cliente/LLM. */
-  const allowed = (tool: string, assessmentId?: string) => {
+  const allowed = async (tool: string, assessmentId?: string) => {
     if (RolePermissions[role].includes(tool)) return null;
-    store.audit({ actor, role, action: `tool_denied:${tool}`, assessmentId, payload: { reason: "role" } });
+    await store.audit({ actor, role, action: `tool_denied:${tool}`, assessmentId, payload: { reason: "role" } });
     return json({ error: "ROLE_NOT_ALLOWED", message: `El rol '${role}' no puede usar ${tool}. Las autorizaciones y aprobaciones las hace un humano.` }, true);
   };
 
@@ -39,9 +39,9 @@ export function createServer(deps: ServerDeps) {
     description: "Registra una evaluación con autorizador, alcance, exclusiones, ventana y límites. Solo el rol 'authorizer' (humano).",
     inputSchema: AssessmentCreateIn.shape,
   }, async input => {
-    const d = allowed("assessment_create"); if (d) return d;
-    const a = store.createAssessment(input, actor);
-    store.audit({ actor, role, action: "assessment_create", assessmentId: a.id, payload: { name: a.name, version: a.version, scope: a.scope.length } });
+    const d = await allowed("assessment_create"); if (d) return d;
+    const a = await store.createAssessment(input, actor);
+    await store.audit({ actor, role, action: "assessment_create", assessmentId: a.id, payload: { name: a.name, version: a.version, scope: a.scope.length } });
     return json({ assessmentId: a.id, version: a.version, state: a.state, contentHash: a.contentHash, next: "Un humano debe avanzar el ciclo (validación de alcance → planificación → aprobación) con el CLI." });
   });
 
@@ -50,8 +50,8 @@ export function createServer(deps: ServerDeps) {
     description: "Verifica si un target (ip, cidr, dominio, url, dispositivo) está autorizado por la evaluación.",
     inputSchema: ScopeValidateIn.shape,
   }, async ({ assessmentId, target }) => {
-    const d = allowed("scope_validate", assessmentId); if (d) return d;
-    return json(policy.validateScope(assessmentId, target as Target, role));
+    const d = await allowed("scope_validate", assessmentId); if (d) return d;
+    return json(await policy.validateScope(assessmentId, target as Target, role));
   });
 
   /* 3. scan_initiate */
@@ -59,27 +59,27 @@ export function createServer(deps: ServerDeps) {
     description: "Lanza un módulo (pasivo, laboratorio o activo). En modo activo o con módulos que cambian estado, primero devuelve un plan pendiente de aprobación humana; luego se reenvía con planId y approvalToken.",
     inputSchema: { ...ScanInitiateIn.shape, planId: z.string().uuid().optional(), approvalToken: z.string().optional() },
   }, async ({ assessmentId, moduleId, mode, targets, params, planId, approvalToken }) => {
-    const d = allowed("scan_initiate", assessmentId); if (d) return d;
+    const d = await allowed("scan_initiate", assessmentId); if (d) return d;
     const mod = modules.get(moduleId);
     if (!mod) return json({ error: "MODULE_NOT_FOUND" }, true);
-    const rec = store.getAssessment(assessmentId);
+    const rec = await store.getAssessment(assessmentId);
     if (!rec) return json({ error: "NO_ACTIVE_ASSESSMENT" }, true);
     const needsApproval = mode === "active" || mod.manifest.changesState;
     const limits = { maxRequestsPerSecond: rec.a.window.maxRequestsPerSecond, maxConcurrency: rec.a.window.maxConcurrency, notAfter: rec.a.window.notAfter, timeoutSec: mod.manifest.runner.timeoutSec };
 
     // Todos los targets deben estar autorizados ANTES de planificar o ejecutar
     for (const t of targets as Target[]) {
-      const v = policy.validateScope(assessmentId, t, role);
-      if (!v.authorized) { store.audit({ actor, role, action: "scan_refused", assessmentId, payload: { moduleId, target: t, reasons: v.reasons } }); return json({ status: "denied", target: t, reasons: v.reasons }, true); }
+      const v = await policy.validateScope(assessmentId, t, role);
+      if (!v.authorized) { await store.audit({ actor, role, action: "scan_refused", assessmentId, payload: { moduleId, target: t, reasons: v.reasons } }); return json({ status: "denied", target: t, reasons: v.reasons }, true); }
     }
 
     if (needsApproval && !planId) {
-      const id = store.createPlan({ assessmentId, moduleId, mode, targets, limits });
-      store.audit({ actor, role, action: "plan:created", assessmentId, payload: { planId: id, moduleId, mode } });
+      const id = await store.createPlan({ assessmentId, moduleId, mode, targets, limits });
+      await store.audit({ actor, role, action: "plan:created", assessmentId, payload: { planId: id, moduleId, mode } });
       return json({ status: "pending_approval", planId: id, plan: { module: moduleId, mode, targets, limits, changesState: mod.manifest.changesState }, next: "Un humano (operator) debe aprobar este plan con el CLI y entregar el token de un solo uso." });
     }
     if (planId) {
-      const plan = store.getPlan(planId);
+      const plan = await store.getPlan(planId);
       const planned = (plan?.targets ?? []).map((t: unknown) => canonical(t));
       if (!plan || plan.assessment_id !== assessmentId || plan.module_id !== moduleId || plan.mode !== mode || !(targets as Target[]).every(t => planned.includes(canonical(t))))
         return json({ status: "denied", reasons: ["APPROVAL_REQUIRED"], message: "El plan no coincide con lo solicitado." }, true);
@@ -97,8 +97,8 @@ export function createServer(deps: ServerDeps) {
         const dec = first && needsApproval ? await policy.check({ ...req, planId, approvalToken }) : first ? await policy.check(req) : await policy.recheck(req);
         first = false;
         if (!dec.allow) { denials.push({ target, reasons: dec.reasons }); continue; }
-        const st = store.getAssessment(assessmentId)!.a.state as State;
-        if (st === "approved") store.transition(assessmentId, "executing", actor, role);
+        const st = (await store.getAssessment(assessmentId))!.a.state as State;
+        if (st === "approved") await store.transition(assessmentId, "executing", actor, role);
         try {
           const r = await mod.run({ grant: { assessmentId, mode, actor: role as any, module: moduleId }, gateway, target, params, signal, maxConcurrency: rec.a.window.maxConcurrency });
           facts.push(...r.facts); suggestions.push(...r.suggestions);
@@ -110,7 +110,7 @@ export function createServer(deps: ServerDeps) {
     } finally { running.delete(runId); }
 
     const out = { status: signal.aborted ? "aborted" : denials.length && !facts.length ? "denied" : "completed", facts: facts.slice(0, 200).map(f => redact(f, 500)), suggestions: suggestions.slice(0, 100), denials };
-    store.audit({ actor, role, action: "scan:finished", assessmentId, payload: { moduleId, mode, status: out.status, facts: facts.length, denials: denials.length } });
+    await store.audit({ actor, role, action: "scan:finished", assessmentId, payload: { moduleId, mode, status: out.status, facts: facts.length, denials: denials.length } });
     return json(out, out.status === "denied");
   });
 
@@ -119,10 +119,10 @@ export function createServer(deps: ServerDeps) {
     description: "Kill switch: detiene de inmediato las ejecuciones en curso y bloquea nuevas hasta que un humano (authorizer) lo libere. Sin assessmentId detiene todo.",
     inputSchema: ScanStopIn.shape,
   }, async ({ assessmentId, reason }) => {
-    const d = allowed("scan_stop", assessmentId); if (d) return d;
+    const d = await allowed("scan_stop", assessmentId); if (d) return d;
     let n = 0;
     for (const r of running.values()) if (!assessmentId || r.assessmentId === assessmentId) { r.ctrl.abort(); n++; }
-    store.activateKillSwitch(reason, actor, role, assessmentId);
+    await store.activateKillSwitch(reason, actor, role, assessmentId);
     return json({ killSwitch: "active", abortedRuns: n, note: "Solo un authorizer humano puede liberarlo; la evaluación detenida requiere una nueva versión de la autorización." });
   });
 
@@ -131,8 +131,8 @@ export function createServer(deps: ServerDeps) {
     description: "Registra un hallazgo (hechos observados separados de hipótesis, evidencia redactada, CVSS y confianza).",
     inputSchema: FindingInput.shape,
   }, async input => {
-    const d = allowed("finding_create", input.assessmentId); if (d) return d;
-    const rec = store.getAssessment(input.assessmentId);
+    const d = await allowed("finding_create", input.assessmentId); if (d) return d;
+    const rec = await store.getAssessment(input.assessmentId);
     if (!rec || !rec.signatureValid) return json({ error: "NO_ACTIVE_ASSESSMENT" }, true);
     if (!["executing", "verifying", "triage"].includes(rec.a.state)) return json({ error: "STATE_TRANSITION_INVALID", message: "Solo se registran hallazgos tras ejecutar un módulo." }, true);
     const [lo, hi] = SEVERITY_BANDS[input.severity];
@@ -150,8 +150,8 @@ export function createServer(deps: ServerDeps) {
       evidence: input.evidence.map(e => ({ description: redact(e.description, 500), redactedContent: redact(e.redactedContent), reproSteps: e.reproSteps.map(s => redact(s, 500)) })),
       businessImpact: redact(input.businessImpact, 1000), recommendation: redact(input.recommendation, 1000),
     };
-    const id = store.addFinding(input.assessmentId, clean);
-    store.audit({ actor, role, action: "finding_create", assessmentId: input.assessmentId, payload: { id, severity: input.severity, asset: clean.asset } });
+    const id = await store.addFinding(input.assessmentId, clean);
+    await store.audit({ actor, role, action: "finding_create", assessmentId: input.assessmentId, payload: { id, severity: input.severity, asset: clean.asset } });
     return json({ findingId: id, stored: true });
   });
 
@@ -160,16 +160,16 @@ export function createServer(deps: ServerDeps) {
     description: "Exporta resultados en Markdown o JSON, sanitizando datos sensibles y separando hechos de hipótesis.",
     inputSchema: ReportGenerateIn.shape,
   }, async ({ assessmentId, format, includeStates }) => {
-    const d = allowed("report_generate", assessmentId); if (d) return d;
-    const rec = store.getAssessment(assessmentId);
+    const d = await allowed("report_generate", assessmentId); if (d) return d;
+    const rec = await store.getAssessment(assessmentId);
     if (!rec || !rec.signatureValid) return json({ error: "NO_ACTIVE_ASSESSMENT" }, true);
     const a = rec.a;
     const order = ["info", "low", "medium", "high", "critical"];
-    const findings = store.listFindings(assessmentId).filter(f => (includeStates as string[]).includes(f.data.triage))
+    const findings = (await store.listFindings(assessmentId)).filter(f => (includeStates as string[]).includes(f.data.triage))
       .sort((x, y) => order.indexOf(y.data.severity) - order.indexOf(x.data.severity));
     // Avanza el ciclo hasta "reportado" solo por transiciones válidas
-    for (const next of ["verifying", "triage", "reported"] as State[]) if (a.state !== "halted" && a.state !== "closed") store.transition(assessmentId, next, actor, role);
-    const chain = store.verifyAuditChain();
+    for (const next of ["verifying", "triage", "reported"] as State[]) if (a.state !== "halted" && a.state !== "closed") await store.transition(assessmentId, next, actor, role);
+    const chain = await store.verifyAuditChain();
     const meta = { assessment: a.name, version: a.version, organization: a.authorizer.organization, window: a.window, scope: a.scope, exclusions: a.exclusions.map(e => ({ target: e.target, technique: e.technique })), auditChain: chain.ok ? "íntegra" : `ALTERADA en seq ${(chain as any).brokenAtSeq}` };
     let text: string;
     if (format === "json") text = JSON.stringify({ meta, findings: findings.map(f => ({ id: f.id, ...f.data })) }, null, 2);
@@ -184,7 +184,7 @@ export function createServer(deps: ServerDeps) {
       text = L.join("\n");
     }
     text = redact(text, 500_000); // segunda barrera de sanitización
-    store.audit({ actor, role, action: "report_generate", assessmentId, payload: { format, findings: findings.length } });
+    await store.audit({ actor, role, action: "report_generate", assessmentId, payload: { format, findings: findings.length } });
     return { content: [{ type: "text" as const, text }] };
   });
 

@@ -4,12 +4,12 @@ Servidor MCP que ejecuta comprobaciones técnicas **solo dentro de una autorizac
 
 ## Instalación y pruebas
     npm install
-    npm test            # 22 pruebas (unitarias, E2E MCP y proceso stdio real). Requiere Node >= 22.13
+    npm test            # 24 pruebas sobre Postgres en proceso (PGlite) con el esquema real de supabase/migrations. Node >= 22
 
 ## Secretos
     export ESC_SIGNING_KEY=$(openssl rand -hex 32)   # firma de autorizaciones; sin valor por defecto
-    export ESC_DB=./esc.db
-Guarda la clave fuera del repositorio. Si cambia, las autorizaciones existentes quedan inválidas (firma no coincide).
+    export ESC_DATABASE_URL='postgres://postgres:<CLAVE>@db.<ref>.supabase.co:5432/postgres'   # Supabase (conexión directa o pooler)
+Guarda ambos valores fuera del repositorio (nunca en el chat ni en Git). La conexión a Supabase exige TLS verificado. Si cambia, las autorizaciones existentes quedan inválidas (firma no coincide).
 
 ## Roles y canales
 - Humano (CLI): `npx tsx src/cli.ts create-assessment a.json | advance <id> <estado> | approve <planId> | release-kill-switch | verify-audit`
@@ -19,11 +19,14 @@ Ciclo: `draft → scope_validated → planned → approved` (humano) → ejecuci
 
 ## Configuración en un cliente MCP
     { "mcpServers": { "ethical-security-copilot": { "command": "npx", "args": ["tsx", "src/main.ts"],
-      "env": { "ESC_ROLE": "agent", "ESC_DB": "./esc.db", "ESC_SIGNING_KEY": "<tu clave>" } } } }
+      "env": { "ESC_ROLE": "agent", "ESC_DATABASE_URL": "<url>", "ESC_SIGNING_KEY": "<tu clave>" } } } }
+
+## Base de datos (Supabase / Postgres)
+El esquema vive en `supabase/migrations/` (auditoría append-only, RLS sin políticas, permisos revocados a `anon`/`authenticated`). Solo el servidor y el CLI deben conectarse, con credenciales privadas; no expongas estas tablas por la API pública. Las pruebas usan el mismo SQL sobre PGlite.
 
 ## Laboratorio
     docker compose up -d     # objetivo ficticio en 172.28.0.10 (red aislada, sin Internet)
 Usa `mode: "lab"`; el Policy Engine solo admite localhost, `*.lab.internal` y 172.28.0.0/16.
 
 ## Límites
-Módulos integrados sin shell (TCP connect, HEAD HTTP, análisis estático). Los hard limits (DoS, fuerza bruta, exfiltración, persistencia, movimiento lateral) se bloquean por diseño. Firma HMAC local; para separar autorizador y servidor, migrar a Ed25519.
+Módulos integrados sin shell (TCP connect, HEAD HTTP, análisis estático). Los hard limits (DoS, fuerza bruta, exfiltración, persistencia, movimiento lateral) se bloquean por diseño. Firma HMAC con clave en el entorno; para separar autorizador y servidor, migrar a Ed25519.

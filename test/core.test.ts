@@ -24,10 +24,10 @@ const input = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-function setup(over: Record<string, unknown> = {}, now = T0, resolver?: (h: string) => Promise<string[]>) {
-  const store = new Store(":memory:", KEY);
-  const a = store.createAssessment(input(over), "ana");
-  for (const s of ["scope_validated", "planned", "approved"] as const) store.transition(a.id, s, "ana", "authorizer");
+async function setup(over: Record<string, unknown> = {}, now = T0, resolver?: (h: string) => Promise<string[]>) {
+  const store = await Store.open("memory", KEY);
+  const a = await store.createAssessment(input(over), "ana");
+  for (const s of ["scope_validated", "planned", "approved"] as const) await store.transition(a.id, s, "ana", "authorizer");
   const policy = new PolicyEngine(store, { now: () => now, resolver: resolver ?? (async () => ["203.0.113.10"]) });
   return { store, a, policy };
 }
@@ -79,12 +79,12 @@ test("lab: solo localhost / red Docker", () => {
 
 /* ---------- Policy engine ---------- */
 test("policy: permite objetivo local en laboratorio", async () => {
-  const { a, policy } = setup();
+  const { a, policy } = await setup();
   assert.equal((await policy.check(req(a.id))).allow, true);
 });
 
 test("policy: deniega fuera de alcance, excluido y no local en lab", async () => {
-  const { a, policy } = setup();
+  const { a, policy } = await setup();
   assert.deepEqual(reasons(await policy.check(req(a.id, { target: ip("8.8.8.8") }))), ["TARGET_OUT_OF_SCOPE"]);
   assert.deepEqual(reasons(await policy.check(req(a.id, { target: ip("203.0.113.50"), mode: "passive" }))), ["TARGET_EXCLUDED"]);
   assert.deepEqual(reasons(await policy.check(req(a.id, { target: ip("203.0.113.10") }))), ["LAB_TARGET_NOT_LOCAL"]);
@@ -92,7 +92,7 @@ test("policy: deniega fuera de alcance, excluido y no local en lab", async () =>
 });
 
 test("policy: técnicas excluidas, módulos fuera de lista y hard limits", async () => {
-  const { a, policy } = setup();
+  const { a, policy } = await setup();
   assert.deepEqual(reasons(await policy.check(req(a.id, { module: "mod_dangerous" }))), ["TECHNIQUE_EXCLUDED"]);
   assert.deepEqual(reasons(await policy.check(req(a.id, { module: "otro_modulo" }))), ["MODULE_NOT_ALLOWED"]);
   assert.deepEqual(reasons(await policy.check(req(a.id, { module: "dos_probe" }))), ["HARD_LIMIT"]);          // aunque esté en la allowlist
@@ -100,82 +100,83 @@ test("policy: técnicas excluidas, módulos fuera de lista y hard limits", async
 });
 
 test("policy: ventana de ejecución", async () => {
-  const early = setup({}, new Date("2026-11-09T12:00:00Z"));
+  const early = await setup({}, new Date("2026-11-09T12:00:00Z"));
   assert.deepEqual(reasons(await early.policy.check(req(early.a.id))), ["OUTSIDE_WINDOW"]);
-  const late = setup({}, new Date("2026-11-12T12:00:00Z"));
+  const late = await setup({}, new Date("2026-11-12T12:00:00Z"));
   assert.deepEqual(reasons(await late.policy.check(req(late.a.id))), ["OUTSIDE_WINDOW"]);
-  const hours = setup({ window: { ...input().window, allowedHours: { from: "09:00", to: "17:00", tz: "America/Bogota" } } }, new Date("2026-11-10T03:00:00Z")); // 22:00 Bogotá
+  const hours = await setup({ window: { ...input().window, allowedHours: { from: "09:00", to: "17:00", tz: "America/Bogota" } } }, new Date("2026-11-10T03:00:00Z")); // 22:00 Bogotá
   assert.deepEqual(reasons(await hours.policy.check(req(hours.a.id))), ["OUTSIDE_WINDOW"]);
 });
 
 test("policy: rate limit y tope total", async () => {
-  const { a, policy } = setup();
+  const { a, policy } = await setup();
   const out: boolean[] = [];
   for (let i = 0; i < 8; i++) out.push((await policy.check(req(a.id))).allow);
   assert.equal(out.filter(Boolean).length, 5); // maxRequestsPerSecond = 5
-  const cap = setup({ window: { ...input().window, maxRequestsPerSecond: 100, maxTotalRequests: 2 } });
+  const cap = await setup({ window: { ...input().window, maxRequestsPerSecond: 100, maxTotalRequests: 2 } });
   const res = [];
   for (let i = 0; i < 4; i++) res.push((await cap.policy.check(req(cap.a.id))).allow);
   assert.deepEqual(res, [true, true, false, false]);
 });
 
 test("policy: estado del ciclo de vida y roles", async () => {
-  const store = new Store(":memory:", KEY);
-  const a = store.createAssessment(input(), "ana"); // sigue en 'draft'
+  const store = await Store.open("memory", KEY);
+  const a = await store.createAssessment(input(), "ana"); // sigue en 'draft'
   const policy = new PolicyEngine(store, { now: () => T0 });
   assert.deepEqual(reasons(await policy.check(req(a.id))), ["STATE_TRANSITION_INVALID"]);
-  assert.equal(store.transition(a.id, "executing", "x", "operator"), false); // no se puede saltar la aprobación
-  const s = setup();
+  assert.equal(await store.transition(a.id, "executing", "x", "operator"), false); // no se puede saltar la aprobación
+  const s = await setup();
   assert.deepEqual(reasons(await s.policy.check(req(s.a.id, { actor: "auditor" }))), ["APPROVAL_REQUIRED"]);
   assert.deepEqual(reasons(await s.policy.check(req(s.a.id, { action: "assessment_create", actor: "agent" }))), ["APPROVAL_REQUIRED"]); // el agente no autoriza
 });
 
 test("policy: firma alterada invalida la autorización", async () => {
-  const { store, a, policy } = setup();
-  store.db.prepare("UPDATE assessments SET content_json = replace(content_json, '203.0.113.0/24', '0.0.0.0/0') WHERE id=?").run(a.id);
+  const { store, a, policy } = await setup();
+  await store.db.query("update public.assessments set content_json = replace(content_json, '203.0.113.0/24', '0.0.0.0/0') where id=$1", [a.id]);
   assert.deepEqual(reasons(await policy.check(req(a.id))), ["SIGNATURE_INVALID"]);
 });
 
 test("policy: modo activo exige aprobación humana de un solo uso", async () => {
-  const { store, a, policy } = setup();
+  const { store, a, policy } = await setup();
   const t = ip("203.0.113.10");
   assert.deepEqual(reasons(await policy.check(req(a.id, { mode: "active", target: t }))), ["APPROVAL_REQUIRED"]);
-  const planId = store.createPlan({ assessmentId: a.id, moduleId: "port_check", mode: "active", targets: [t], limits: {} });
-  assert.throws(() => store.approvePlan(planId, "llm", "agent"));                // el LLM no puede aprobar
-  const token = store.approvePlan(planId, "oscar", "operator");
+  const planId = await store.createPlan({ assessmentId: a.id, moduleId: "port_check", mode: "active", targets: [t], limits: {} });
+  await assert.rejects(() => store.approvePlan(planId, "llm", "agent"));                // el LLM no puede aprobar
+  const token = await store.approvePlan(planId, "oscar", "operator");
   assert.deepEqual(reasons(await policy.check(req(a.id, { mode: "active", target: t, planId, approvalToken: "falso" }))), ["APPROVAL_REQUIRED"]);
   assert.equal((await policy.check(req(a.id, { mode: "active", target: t, planId, approvalToken: token }))).allow, true);
   assert.deepEqual(reasons(await policy.check(req(a.id, { mode: "active", target: t, planId, approvalToken: token }))), ["APPROVAL_REQUIRED"]); // reutilizar el token falla
 });
 
 test("policy: DNS rebinding hacia rangos sensibles se bloquea en modo activo", async () => {
-  const { store, a, policy } = setup({}, T0, async () => ["169.254.169.254"]); // metadatos cloud
+  const { store, a, policy } = await setup({}, T0, async () => ["169.254.169.254"]); // metadatos cloud
   const t: Target = { type: "domain", value: "api.example.test", includeSubdomains: false };
-  const planId = store.createPlan({ assessmentId: a.id, moduleId: "port_check", mode: "active", targets: [t], limits: {} });
-  const token = store.approvePlan(planId, "oscar", "operator");
+  const planId = await store.createPlan({ assessmentId: a.id, moduleId: "port_check", mode: "active", targets: [t], limits: {} });
+  const token = await store.approvePlan(planId, "oscar", "operator");
   assert.deepEqual(reasons(await policy.check(req(a.id, { mode: "active", target: t, planId, approvalToken: token }))), ["DNS_RESOLVES_OUT_OF_SCOPE"]);
 });
 
 test("policy: kill switch bloquea todo hasta liberación humana", async () => {
-  const { store, a, policy } = setup();
-  store.activateKillSwitch("prueba", "oscar", "operator", a.id);
+  const { store, a, policy } = await setup();
+  await store.activateKillSwitch("prueba", "oscar", "operator", a.id);
   assert.deepEqual(reasons(await policy.check(req(a.id))), ["KILL_SWITCH_ACTIVE"]);
-  assert.throws(() => store.releaseKillSwitch("llm", "agent"));
-  store.releaseKillSwitch("ana", "authorizer");
-  assert.equal(store.getAssessment(a.id)!.a.state, "halted"); // sigue detenida: requiere nueva versión
+  await assert.rejects(() => store.releaseKillSwitch("llm", "agent"));
+  await store.releaseKillSwitch("ana", "authorizer");
+  assert.equal((await store.getAssessment(a.id))!.a.state, "halted"); // sigue detenida: requiere nueva versión
   assert.deepEqual(reasons(await policy.check(req(a.id))), ["STATE_TRANSITION_INVALID"]);
 });
 
 /* ---------- Auditoría y redacción ---------- */
 test("auditoría: cadena íntegra y manipulación detectada", async () => {
-  const { store, a, policy } = setup();
+  const { store, a, policy } = await setup();
   await policy.check(req(a.id)); await policy.check(req(a.id, { target: ip("8.8.8.8") }));
-  assert.deepEqual(store.verifyAuditChain(), { ok: true });
-  assert.throws(() => store.db.exec("UPDATE audit_log SET action='x' WHERE seq=1"), /append-only/);
-  assert.throws(() => store.db.exec("DELETE FROM audit_log WHERE seq=1"), /append-only/);
-  store.db.exec("DROP TRIGGER audit_no_update"); // atacante con acceso directo al archivo
-  store.db.exec("UPDATE audit_log SET payload_redacted='manipulado' WHERE seq=2");
-  const r = store.verifyAuditChain();
+  assert.deepEqual(await store.verifyAuditChain(), { ok: true });
+  await assert.rejects(() => store.db.query("update public.audit_log set action='x' where seq=1"), /append-only/);
+  await assert.rejects(() => store.db.query("delete from public.audit_log where seq=1"), /append-only/);
+  await assert.rejects(() => store.db.query("truncate public.audit_log"), /append-only/);
+  await store.db.query("drop trigger audit_no_update on public.audit_log"); // atacante con privilegios de propietario
+  await store.db.query("update public.audit_log set payload_redacted='manipulado' where seq=2");
+  const r = await store.verifyAuditChain();
   assert.equal(r.ok, false);
   assert.equal((r as any).brokenAtSeq, 2);
 });
@@ -185,4 +186,22 @@ test("redacción: secretos y PII", () => {
   const out = redact(txt);
   for (const leak of ["Sup3rS3cret", "juan@demo.com", "4111 1111 1111 1111", "abcdefghijklmnop12345", "AKIAABCDEFGHIJKLMNOP"]) assert.ok(!out.includes(leak), leak);
   assert.ok(redact("x".repeat(9000)).endsWith("[TRUNCATED]"));
+});
+
+/* ---------- Concurrencia (Postgres) ---------- */
+test("auditoría: 25 escrituras simultáneas producen una cadena lineal e íntegra", async () => {
+  const store = await Store.open("memory", KEY);
+  await Promise.all(Array.from({ length: 25 }, (_, i) => store.audit({ actor: `a${i}`, role: "agent", action: "carga", payload: { i } })));
+  assert.deepEqual(await store.verifyAuditChain(), { ok: true });
+  const n = (await store.db.query<{ n: string }>("select count(*) n from public.audit_log"))[0].n;
+  assert.equal(Number(n), 25);
+});
+
+test("aprobación: dos usos simultáneos del mismo token, solo uno gana", async () => {
+  const { store, a } = await setup();
+  const t = ip("127.0.0.1");
+  const planId = await store.createPlan({ assessmentId: a.id, moduleId: "port_check", mode: "active", targets: [t], limits: {} });
+  const token = await store.approvePlan(planId, "oscar", "operator");
+  const results = await Promise.all(Array.from({ length: 6 }, () => store.consumeApproval(planId, token, { assessmentId: a.id, moduleId: "port_check", target: t })));
+  assert.equal(results.filter(Boolean).length, 1);
 });
