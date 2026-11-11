@@ -1,0 +1,16 @@
+# Laboratorio local: objetivos FICTICIOS en una red aislada (172.28.0.0/16 = red "lab" por defecto del Policy Engine).
+# internal: true => los contenedores no tienen salida a Internet.
+services:
+  lab-web:
+    image: node:22-alpine
+    command: ["node", "/app/vulnerable-mock.js"]
+    volumes: ["./lab/vulnerable-mock.js:/app/vulnerable-mock.js:ro"]
+    networks: { lab: { ipv4_address: 172.28.0.10 } }
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+networks:
+  lab:
+    driver: bridge
+    internal: true
+    ipam: { config: [{ subnet: 172.28.0.0/16 }] }
