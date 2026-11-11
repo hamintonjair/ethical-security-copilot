@@ -36,7 +36,11 @@ export async function openDb(target: string): Promise<Db> {
     return { ...root, close: () => lite.close() };
   }
   const local = /@(localhost|127\.0\.0\.1)[:/]/.test(target);
-  const pool = new pg.Pool({ connectionString: target, max: 5, ssl: local ? undefined : { rejectUnauthorized: true } });
+  // TLS siempre verificado. Supabase firma con su propia CA: pásala en ESC_DATABASE_CA (PEM) o ESC_DATABASE_CA_FILE.
+  const ca = process.env.ESC_DATABASE_CA ?? (process.env.ESC_DATABASE_CA_FILE ? readFileSync(process.env.ESC_DATABASE_CA_FILE, "utf8") : undefined);
+  // pg lee sslmode de la URL y lo pisaría: se quita para que mande solo nuestra configuración (siempre verificada).
+  const cleanUrl = target.replace(/([?&])sslmode=[^&]*&?/, "$1").replace(/[?&]$/, "");
+  const pool = new pg.Pool({ connectionString: local ? target : cleanUrl, max: 5, ssl: local ? undefined : { rejectUnauthorized: true, ...(ca ? { ca } : {}) } });
   const wrapClient = (c: pg.PoolClient): Db => ({
     query: async (sql, params) => (await c.query(sql, params as any[])).rows,
     tx: async fn => fn(wrapClient(c)), // ya estamos en una transacción

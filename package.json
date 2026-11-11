@@ -4,7 +4,10 @@
   "type": "module",
   "scripts": {
     "test": "tsx --test test/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/http.js",
+    "start:stdio": "node dist/main.js"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.16",

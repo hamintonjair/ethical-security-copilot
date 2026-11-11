@@ -17,14 +17,16 @@ const json = (o: unknown, isError = false) => ({ content: [{ type: "text" as con
 
 const SEVERITY_BANDS: Record<string, [number, number]> = { info: [0, 0], low: [0.1, 3.9], medium: [4, 6.9], high: [7, 8.9], critical: [9, 10] };
 
-export interface ServerDeps { store: Store; role: RoleT; actor: string; modules?: Map<string, Module>; policy?: PolicyEngine }
+export type RunRegistry = Map<string, { assessmentId: string; ctrl: AbortController }>;
+/** `runs` se comparte entre instancias (transporte HTTP sin estado) para que scan_stop aborte ejecuciones iniciadas en otra petición. */
+export interface ServerDeps { store: Store; role: RoleT; actor: string; modules?: Map<string, Module>; policy?: PolicyEngine; runs?: RunRegistry }
 
 export function createServer(deps: ServerDeps) {
   const { store, role, actor } = deps;
   const modules = deps.modules ?? builtinModules();
   const policy = deps.policy ?? new PolicyEngine(store, { manifests: new Map([...modules].map(([k, m]) => [k, m.manifest])) });
   const gateway = new Gateway(policy);
-  const running = new Map<string, { assessmentId: string; ctrl: AbortController }>();
+  const running: RunRegistry = deps.runs ?? new Map();
   const server = new McpServer({ name: "ethical-security-copilot", version: "0.1.0" });
 
   /** Permiso por rol: el rol lo fija quien lanza el servidor, nunca el cliente/LLM. */
