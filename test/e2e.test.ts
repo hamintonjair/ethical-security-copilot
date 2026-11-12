@@ -28,7 +28,7 @@ after(() => { vuln.closeAllConnections?.(); vuln.close(); openSock.close(); });
 const assessmentInput = () => ({
   name: "Laboratorio local", authorizer: { organization: "Org Demo", name: "Ana", email: "ana@demo.test", emergencyContact: "ana@demo.test" },
   allowedModes: ["passive", "lab", "active"],
-  scope: [{ type: "cidr", value: "127.0.0.0/8" }],
+  scope: [{ type: "cidr", value: "127.0.0.0/16" }],
   exclusions: [{ target: { type: "ip", value: "127.0.0.99" }, reason: "equipo excluido" }],
   window: { notBefore: "2020-01-01T00:00:00Z", notAfter: "2099-01-01T00:00:00Z", maxRequestsPerSecond: 50, maxConcurrency: 4 },
   allowedModules: ["config_audit", "tcp_port_check", "http_header_audit", "lab_write_probe"],

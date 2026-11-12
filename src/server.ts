@@ -7,15 +7,16 @@ import { Store } from "./store.js";
 import { PolicyEngine } from "./policy.js";
 import { Gateway, GatewayDenied } from "./gateway.js";
 import { builtinModules, type Module } from "./modules.js";
-import { targetMatches, normalizeHost, type Target } from "./scope.js";
+import { broadScopeProblem, type Target } from "./scope.js";
 import { canonical } from "./crypto.js";
 import { redact } from "./redact.js";
 import type { State } from "./state.js";
+import { createFinding } from "./findings.js";
+import { buildReport } from "./report.js";
 
 type RoleT = z.infer<typeof Role>;
 const json = (o: unknown, isError = false) => ({ content: [{ type: "text" as const, text: JSON.stringify(o, null, 2) }], ...(isError ? { isError: true } : {}) });
 
-const SEVERITY_BANDS: Record<string, [number, number]> = { info: [0, 0], low: [0.1, 3.9], medium: [4, 6.9], high: [7, 8.9], critical: [9, 10] };
 
 export type RunRegistry = Map<string, { assessmentId: string; ctrl: AbortController }>;
 /** `runs` se comparte entre instancias (transporte HTTP sin estado) para que scan_stop aborte ejecuciones iniciadas en otra petición. */
@@ -42,6 +43,8 @@ export function createServer(deps: ServerDeps) {
     inputSchema: AssessmentCreateIn.shape,
   }, async input => {
     const d = await allowed("assessment_create"); if (d) return d;
+    const broad = broadScopeProblem(input.scope as Target[]);
+    if (broad) return json({ error: "SCOPE_TOO_BROAD", message: broad }, true);
     const a = await store.createAssessment(input, actor);
     await store.audit({ actor, role, action: "assessment_create", assessmentId: a.id, payload: { name: a.name, version: a.version, scope: a.scope.length } });
     return json({ assessmentId: a.id, version: a.version, state: a.state, contentHash: a.contentHash, next: "Un humano debe avanzar el ciclo (validación de alcance → planificación → aprobación) con el CLI." });
@@ -134,27 +137,8 @@ export function createServer(deps: ServerDeps) {
     inputSchema: FindingInput.shape,
   }, async input => {
     const d = await allowed("finding_create", input.assessmentId); if (d) return d;
-    const rec = await store.getAssessment(input.assessmentId);
-    if (!rec || !rec.signatureValid) return json({ error: "NO_ACTIVE_ASSESSMENT" }, true);
-    if (!["executing", "verifying", "triage"].includes(rec.a.state)) return json({ error: "STATE_TRANSITION_INVALID", message: "Solo se registran hallazgos tras ejecutar un módulo." }, true);
-    const [lo, hi] = SEVERITY_BANDS[input.severity];
-    if (input.cvssScore < lo || input.cvssScore > hi) return json({ error: "SEVERITY_CVSS_MISMATCH", message: `La severidad '${input.severity}' no corresponde a CVSS ${input.cvssScore}.` }, true);
-    const asset = input.asset.trim();
-    const asTarget: Target | null = /^https?:\/\//i.test(asset) ? { type: "url", value: asset }
-      : /^[\d.:a-f]+(\/\d+)?$/i.test(asset) && asset.includes(".") || asset.includes(":") && /^[\da-f:]+$/i.test(asset) ? (asset.includes("/") ? { type: "cidr", value: asset } : { type: "ip", value: asset })
-      : /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(asset) ? { type: "domain", value: normalizeHost(asset) ?? asset, includeSubdomains: false } : null;
-    const hostPort = /^(.+):(\d{1,5})$/.exec(asset); // "127.0.0.1:8080"
-    const checkTarget = hostPort ? ({ type: "ip", value: hostPort[1] } as Target) : asTarget;
-    if (checkTarget && !targetMatches(checkTarget, rec.a.scope)) return json({ error: "TARGET_OUT_OF_SCOPE", message: "El activo del hallazgo no está en el alcance." }, true);
-    const clean = {
-      ...input, title: redact(input.title, 200), asset: redact(asset, 300),
-      observedFacts: input.observedFacts.map(f => redact(f, 1000)), riskHypotheses: input.riskHypotheses.map(f => redact(f, 1000)),
-      evidence: input.evidence.map(e => ({ description: redact(e.description, 500), redactedContent: redact(e.redactedContent), reproSteps: e.reproSteps.map(s => redact(s, 500)) })),
-      businessImpact: redact(input.businessImpact, 1000), recommendation: redact(input.recommendation, 1000),
-    };
-    const id = await store.addFinding(input.assessmentId, clean);
-    await store.audit({ actor, role, action: "finding_create", assessmentId: input.assessmentId, payload: { id, severity: input.severity, asset: clean.asset } });
-    return json({ findingId: id, stored: true });
+    const r = await createFinding(store, input, actor, role);
+    return r.ok ? json({ findingId: r.findingId, stored: true }) : json({ error: r.error, ...(r.message ? { message: r.message } : {}) }, true);
   });
 
   /* 6. report_generate */
@@ -163,31 +147,8 @@ export function createServer(deps: ServerDeps) {
     inputSchema: ReportGenerateIn.shape,
   }, async ({ assessmentId, format, includeStates }) => {
     const d = await allowed("report_generate", assessmentId); if (d) return d;
-    const rec = await store.getAssessment(assessmentId);
-    if (!rec || !rec.signatureValid) return json({ error: "NO_ACTIVE_ASSESSMENT" }, true);
-    const a = rec.a;
-    const order = ["info", "low", "medium", "high", "critical"];
-    const findings = (await store.listFindings(assessmentId)).filter(f => (includeStates as string[]).includes(f.data.triage))
-      .sort((x, y) => order.indexOf(y.data.severity) - order.indexOf(x.data.severity));
-    // Avanza el ciclo hasta "reportado" solo por transiciones válidas
-    for (const next of ["verifying", "triage", "reported"] as State[]) if (a.state !== "halted" && a.state !== "closed") await store.transition(assessmentId, next, actor, role);
-    const chain = await store.verifyAuditChain();
-    const meta = { assessment: a.name, version: a.version, organization: a.authorizer.organization, window: a.window, scope: a.scope, exclusions: a.exclusions.map(e => ({ target: e.target, technique: e.technique })), auditChain: chain.ok ? "íntegra" : `ALTERADA en seq ${(chain as any).brokenAtSeq}` };
-    let text: string;
-    if (format === "json") text = JSON.stringify({ meta, findings: findings.map(f => ({ id: f.id, ...f.data })) }, null, 2);
-    else {
-      const L: string[] = [`# Informe: ${a.name}`, "", `- Organización autorizadora: ${a.authorizer.organization}`, `- Ventana: ${a.window.notBefore} → ${a.window.notAfter}`, `- Alcance: ${a.scope.map(s => s.value).join(", ")}`, `- Auditoría: ${meta.auditChain}`, "", `## Resumen`, "", "| Severidad | Hallazgos |", "|---|---|", ...order.slice().reverse().map(s => `| ${s} | ${findings.filter(f => f.data.severity === s).length} |`), ""];
-      for (const f of findings) {
-        const x = f.data;
-        L.push(`## ${x.title}`, "", `- **Activo:** ${x.asset}`, `- **Severidad:** ${x.severity} (CVSS ${x.cvssScore}, ${x.cvssVector})`, `- **Confianza:** ${x.confidence}`, `- **Triaje:** ${x.triage}`, "", "### Hechos observados", ...x.observedFacts.map((o: string) => `- ${o}`), "");
-        if (x.riskHypotheses.length) L.push("### Hipótesis de riesgo (no verificadas)", ...x.riskHypotheses.map((o: string) => `- ${o}`), "");
-        L.push("### Evidencia (redactada)", ...x.evidence.flatMap((e: any) => [`- ${e.description}`, "  ```", `  ${e.redactedContent.replace(/\n/g, "\n  ")}`, "  ```", ...e.reproSteps.map((s: string, i: number) => `  ${i + 1}. ${s}`)]), "", `### Impacto de negocio`, x.businessImpact, "", `### Recomendación`, x.recommendation, "");
-      }
-      text = L.join("\n");
-    }
-    text = redact(text, 500_000); // segunda barrera de sanitización
-    await store.audit({ actor, role, action: "report_generate", assessmentId, payload: { format, findings: findings.length } });
-    return { content: [{ type: "text" as const, text }] };
+    const r = await buildReport(store, { assessmentId, format, includeStates: includeStates as string[], advance: true, actor, role });
+    return r.ok ? { content: [{ type: "text" as const, text: r.text }] } : json({ error: r.error }, true);
   });
 
   return { server, policy, store };

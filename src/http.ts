@@ -11,6 +11,9 @@ import { createServer, type RunRegistry } from "./server.js";
 import { PolicyEngine } from "./policy.js";
 import { builtinModules } from "./modules.js";
 import { sha256 } from "./crypto.js";
+import { Auth } from "./web/auth.js";
+import { createApi } from "./web/api.js";
+import { securityHeaders, serveStatic } from "./web/static.js";
 
 const HTTP_ROLES = ["agent", "analyst", "auditor"] as const;
 type HttpRole = (typeof HTTP_ROLES)[number];
@@ -31,14 +34,19 @@ export function createHttpApp(o: HttpOptions): http.Server {
   const modules = builtinModules();
   const policy = new PolicyEngine(o.store, { manifests: new Map([...modules].map(([k, m]) => [k, m.manifest])) });
   const runs: RunRegistry = new Map();
+  const api = createApi({ store: o.store, auth: new Auth(o.store), runs });
   const hosts = new Set(o.allowedHosts.map(h => h.toLowerCase()));
 
   const app = http.createServer(async (req, res) => {
     try {
       const host = String(req.headers.host ?? "").toLowerCase().replace(/:\d+$/, "");
       if (!hosts.has(host)) return send(res, 403, { error: "HOST_NOT_ALLOWED" });
-      const path = (req.url ?? "").split("?")[0];
+      securityHeaders(res);
+      const [path, qs = ""] = (req.url ?? "").split("?");
       if (path === "/healthz") return send(res, 200, { status: "ok" }); // sin datos; solo para el health check de la plataforma
+      if (path === "/") { res.writeHead(302, { Location: "/app/" }); return void res.end(); }
+      if (path.startsWith("/api/")) return await api(req, res, path, new URLSearchParams(qs));
+      if (await serveStatic(req, res, path)) return;
       if (path === "/readyz") return (await o.store.ping()) ? send(res, 200, { status: "ready" }) : send(res, 503, { status: "db_unavailable" }); // sin detalles del error
       if (path !== "/mcp") return send(res, 404, { error: "NOT_FOUND" });
 

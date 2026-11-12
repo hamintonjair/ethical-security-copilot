@@ -48,3 +48,17 @@ Variables de entorno (créalas en el panel de Render; **nunca** en el repositori
 
 Cliente MCP remoto: URL `https://<servicio>.onrender.com/mcp` con cabecera `Authorization: Bearer <ESC_HTTP_TOKEN>`.
 Para el CLI humano apunta a la misma base: `ESC_DATABASE_URL=… ESC_SIGNING_KEY=… npx tsx src/cli.ts …`.
+
+## Interfaz web
+
+Consola en `/app/` (misma instancia que el MCP en `/mcp`): panel, evaluaciones con ciclo de vida, planes (aprobación humana), hallazgos, informes, auditoría con verificación de la cadena y gestión de usuarios.
+
+- Cuentas propias (usuario + contraseña, scrypt), sesión con cookie `HttpOnly`/`SameSite=Strict`, token CSRF, bloqueo tras 5 fallos y cierre por inactividad (30 min).
+- Roles: `authorizer`, `operator`, `analyst`, `auditor`.
+- Primer usuario (una sola vez, desde tu equipo, con la misma `ESC_DATABASE_URL` y `ESC_SIGNING_KEY` que Render):
+
+```bash
+ESC_DATABASE_URL="..." ESC_SIGNING_KEY="..." npx tsx src/cli.ts create-user <usuario> authorizer
+```
+
+La contraseña se pide oculta y deberá cambiarse al primer acceso. Otros comandos: `reset-password`, `unlock-user`, `list-users`.

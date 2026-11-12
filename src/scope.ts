@@ -129,3 +129,15 @@ export const SENSITIVE_NETS: Target[] = [
   { type: "cidr", value: "10.0.0.0/8" }, { type: "cidr", value: "172.16.0.0/12" }, { type: "cidr", value: "192.168.0.0/16" },
   { type: "cidr", value: "100.64.0.0/10" }, { type: "cidr", value: "fe80::/10" }, { type: "cidr", value: "fc00::/7" },
 ];
+
+/** Red de seguridad: un alcance autorizado no puede ser "casi todo Internet". Devuelve el motivo o null. */
+export function broadScopeProblem(targets: Target[]): string | null {
+  for (const t of targets) {
+    if (t.type !== "cidr") continue;
+    const c = parseCidr(t.value);
+    if (!c) return `El rango ${t.value} no es válido.`;
+    if (c.family === "ipv4" && c.prefix < 16) return `El rango ${t.value} es demasiado amplio (mínimo /16).`;
+    if (c.family === "ipv6" && c.prefix < 48) return `El rango ${t.value} es demasiado amplio (mínimo /48).`;
+  }
+  return null;
+}

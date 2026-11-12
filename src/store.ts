@@ -149,6 +149,46 @@ export class Store {
     return p ? { ...p, targets: JSON.parse(p.targets_json), limits: JSON.parse(p.limits_json) } : null;
   }
 
+  /* ---------- Consultas para la interfaz web ---------- */
+  /** Última versión de cada evaluación, la más reciente primero. */
+  async listAssessments(): Promise<{ id: string; version: number; state: string; createdAt: string; createdBy: string; name: string; organization: string; modes: string[]; window: { notBefore: string; notAfter: string } }[]> {
+    const rows = await this.db.query("select distinct on (id) id, version, state, content_json, created_by, created_at from public.assessments order by id, version desc");
+    return rows.map(r => { const c = JSON.parse(r.content_json); return { id: r.id, version: Number(r.version), state: r.state, createdAt: iso(r.created_at), createdBy: r.created_by, name: c.name, organization: c.authorizer?.organization ?? "", modes: c.allowedModes ?? [], window: { notBefore: c.window?.notBefore, notAfter: c.window?.notAfter } }; })
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+  async listVersions(id: string) {
+    return (await this.db.query("select version, state, content_hash, created_by, created_at from public.assessments where id=$1 order by version desc", [id]))
+      .map(r => ({ version: Number(r.version), state: r.state as string, contentHash: r.content_hash as string, createdBy: r.created_by as string, createdAt: iso(r.created_at) }));
+  }
+  async listPlans(f: { assessmentId?: string; status?: string } = {}) {
+    const rows = await this.db.query("select * from public.plans where ($1::text is null or assessment_id=$1) and ($2::text is null or status=$2) order by created_at desc limit 200", [f.assessmentId ?? null, f.status ?? null]);
+    return rows.map(p => ({ id: p.id as string, assessmentId: p.assessment_id as string, assessmentVersion: Number(p.assessment_version), moduleId: p.module_id as string, mode: p.mode as string, targets: JSON.parse(p.targets_json), limits: JSON.parse(p.limits_json), status: p.status as string, approvedBy: (p.approved_by ?? null) as string | null, createdAt: iso(p.created_at) }));
+  }
+  async rejectPlan(planId: string, actor: string, role: Role): Promise<boolean> {
+    if (role !== "operator" && role !== "authorizer") throw new Error("Solo un humano (operator/authorizer) puede rechazar");
+    const done = await this.db.query("update public.plans set status='rejected', approval_token_hash=null where id=$1 and status='pending_approval' returning id", [planId]);
+    if (!done.length) return false;
+    await this.audit({ actor, role, action: "plan:rejected", payload: { planId } });
+    return true;
+  }
+  async setTriage(findingId: string, triage: string, actor: string, role: Role): Promise<boolean> {
+    const r = (await this.db.query("select assessment_id, data_json from public.findings where id=$1", [findingId]))[0];
+    if (!r) return false;
+    const data = JSON.parse(r.data_json); data.triage = triage;
+    await this.db.query("update public.findings set data_json=$2, triage=$3 where id=$1", [findingId, canonical(data), triage]);
+    await this.audit({ actor, role, action: "finding:triage", assessmentId: r.assessment_id, payload: { findingId, triage } });
+    return true;
+  }
+  async listAudit(limit: number, offset: number) {
+    const rows = await this.db.query("select seq, ts, actor, role, action, assessment_id, decision_id, payload_redacted, prev_hash, hash from public.audit_log order by seq desc limit $1 offset $2", [limit, offset]);
+    const total = Number((await this.db.query("select count(*) n from public.audit_log"))[0].n);
+    return { total, rows: rows.map(r => ({ seq: Number(r.seq), ts: iso(r.ts), actor: r.actor as string, role: r.role as string, action: r.action as string, assessmentId: (r.assessment_id ?? null) as string | null, decisionId: (r.decision_id ?? null) as string | null, payload: r.payload_redacted as string, prevHash: r.prev_hash as string, hash: r.hash as string })) };
+  }
+  async killSwitchInfo(): Promise<{ active: boolean; reason: string | null; activatedAt: string | null }> {
+    const r = (await this.db.query("select active, reason, activated_at from public.kill_switch where id=1"))[0];
+    return { active: r?.active === true, reason: r?.reason ?? null, activatedAt: r?.activated_at ? iso(r.activated_at) : null };
+  }
+
   /* ---------- Hallazgos (la evidencia se redacta en la ingesta) ---------- */
   async addFinding(assessmentId: string, data: Record<string, unknown>): Promise<string> {
     const id = randomUUID();
