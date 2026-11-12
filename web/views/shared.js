@@ -7,7 +7,7 @@ const ACTIONS = {
   assessment_create: "Evaluación creada", assessment_version: "Nueva versión del alcance", finding_create: "Hallazgo registrado", "finding:triage": "Triaje de hallazgo",
   report_generate: "Informe cerrado", report_preview: "Vista previa de informe", "scan:finished": "Ejecución terminada", scan_refused: "Ejecución rechazada",
   "auth:login": "Inicio de sesión", "auth:login_failed": "Intento de entrada fallido", "auth:logout": "Cierre de sesión", "auth:password_changed": "Contraseña cambiada",
-  "user:create": "Usuario creado", "user:update": "Usuario modificado", "user:reset_password": "Contraseña restablecida", "audit:verify": "Cadena verificada", "web:forbidden": "Acceso denegado por rol",
+  "user:create": "Usuario creado", "user:update": "Usuario modificado", "user:reset_password": "Contraseña restablecida", "audit:verify": "Cadena verificada", "oauth:approve": "Conexión de cliente MCP aprobada", "oauth:deny": "Conexión de cliente MCP rechazada", "web:forbidden": "Acceso denegado por rol",
 };
 export function actionLabel(a) {
   if (ACTIONS[a]) return ACTIONS[a];

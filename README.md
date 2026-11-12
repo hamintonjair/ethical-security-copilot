@@ -62,3 +62,7 @@ ESC_DATABASE_URL="..." ESC_SIGNING_KEY="..." npx tsx src/cli.ts create-user <usu
 ```
 
 La contraseña se pide oculta y deberá cambiarse al primer acceso. Otros comandos: `reset-password`, `unlock-user`, `list-users`.
+
+## Conectar Claude (OAuth)
+
+El servidor MCP acepta, además del token fijo `ESC_HTTP_TOKEN`, OAuth 2.1 con PKCE (registro dinámico de clientes). En Claude: *Conectores → Agregar conector personalizado* con `https://<tu-servicio>.onrender.com/mcp`. Se abrirá la consola para que un **authorizer** inicie sesión y apruebe la conexión. El token resultante solo da el rol de agente del MCP (nunca permisos de la consola), caduca en 1 h con refresh rotatorio, y deja de valer si esa cuenta se deshabilita o deja de ser authorizer.

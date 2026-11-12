@@ -4,6 +4,7 @@ import { assessmentsView, newAssessmentView } from "./views/assessments.js";
 import { assessmentView } from "./views/assessment.js";
 import { auditView } from "./views/audit.js";
 import { usersView } from "./views/users.js";
+import { authorizeView } from "./views/authorize.js";
 import { accountView } from "./views/account.js";
 
 const root = document.getElementById("root");
@@ -101,6 +102,7 @@ const ROUTES = [
   [/^#\/auditoria$/, () => auditView(ctx)],
   [/^#\/usuarios$/, () => usersView(ctx)],
   [/^#\/cuenta$/, () => accountView(ctx)],
+  [/^#\/autorizar\?/, () => authorizeView(ctx)],
 ];
 let token = 0;
 async function renderRoute() {

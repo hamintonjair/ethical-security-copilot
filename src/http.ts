@@ -12,6 +12,7 @@ import { PolicyEngine } from "./policy.js";
 import { builtinModules } from "./modules.js";
 import { sha256 } from "./crypto.js";
 import { Auth } from "./web/auth.js";
+import { OAuth, OAuthError } from "./oauth.js";
 import { createApi } from "./web/api.js";
 import { securityHeaders, serveStatic } from "./web/static.js";
 
@@ -19,12 +20,21 @@ const HTTP_ROLES = ["agent", "analyst", "auditor"] as const;
 type HttpRole = (typeof HTTP_ROLES)[number];
 const MAX_BODY = 1_000_000;
 
-export interface HttpOptions { store: Store; token: string; role?: HttpRole; allowedHosts: string[]; actor?: string }
+export interface HttpOptions { store: Store; token: string; role?: HttpRole; allowedHosts: string[]; actor?: string; publicUrl?: string }
 
 const safeEqual = (a: string, b: string) => timingSafeEqual(Buffer.from(sha256(a), "hex"), Buffer.from(sha256(b), "hex"));
 const send = (res: http.ServerResponse, code: number, body: unknown) => {
   res.writeHead(code, { "Content-Type": "application/json", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
   res.end(JSON.stringify(body));
+};
+
+
+const readBody = async (req: http.IncomingMessage, limit = 20_000): Promise<Record<string, any>> => {
+  const chunks: Buffer[] = []; let size = 0;
+  for await (const c of req) { size += (c as Buffer).length; if (size > limit) throw new OAuthError("invalid_request", "Cuerpo demasiado grande.", 413); chunks.push(c as Buffer); }
+  const text = Buffer.concat(chunks).toString("utf8");
+  if (String(req.headers["content-type"] ?? "").includes("application/json")) { try { return JSON.parse(text || "{}"); } catch { throw new OAuthError("invalid_request", "JSON no válido."); } }
+  return Object.fromEntries(new URLSearchParams(text));
 };
 
 export function createHttpApp(o: HttpOptions): http.Server {
@@ -35,6 +45,7 @@ export function createHttpApp(o: HttpOptions): http.Server {
   const policy = new PolicyEngine(o.store, { manifests: new Map([...modules].map(([k, m]) => [k, m.manifest])) });
   const runs: RunRegistry = new Map();
   const api = createApi({ store: o.store, auth: new Auth(o.store), runs });
+  const oauth = new OAuth(o.store);
   const hosts = new Set(o.allowedHosts.map(h => h.toLowerCase()));
 
   const app = http.createServer(async (req, res) => {
@@ -44,6 +55,24 @@ export function createHttpApp(o: HttpOptions): http.Server {
       securityHeaders(res);
       const [path, qs = ""] = (req.url ?? "").split("?");
       if (path === "/healthz") return send(res, 200, { status: "ok" }); // sin datos; solo para el health check de la plataforma
+      const base = (o.publicUrl ?? `${req.headers["x-forwarded-proto"] === "https" ? "https" : "http"}://${req.headers.host}`).replace(/\/$/, "");
+      if (path.startsWith("/.well-known/oauth-protected-resource")) return send(res, 200, { resource: `${base}/mcp`, authorization_servers: [base], bearer_methods_supported: ["header"] });
+      if (path.startsWith("/.well-known/oauth-authorization-server")) return send(res, 200, {
+        issuer: base, authorization_endpoint: `${base}/oauth/authorize`, token_endpoint: `${base}/oauth/token`, registration_endpoint: `${base}/oauth/register`,
+        response_types_supported: ["code"], grant_types_supported: ["authorization_code", "refresh_token"], code_challenge_methods_supported: ["S256"], token_endpoint_auth_methods_supported: ["none"] });
+      if (path === "/oauth/authorize" && req.method === "GET") {
+        const q = new URLSearchParams(qs);
+        try { await oauth.checkRequest(Object.fromEntries(q)); } catch (e) { if (e instanceof OAuthError) return send(res, 400, { error: e.code, error_description: e.message }); throw e; }
+        res.writeHead(302, { Location: `/app/#/autorizar?${q.toString()}`, "Cache-Control": "no-store" }); return void res.end();
+      }
+      if (path === "/oauth/register" || path === "/oauth/token") {
+        if (req.method !== "POST") return send(res, 405, { error: "METHOD_NOT_ALLOWED" });
+        try {
+          const b = await readBody(req);
+          if (path === "/oauth/register") return send(res, 201, await oauth.register(b));
+          return send(res, 200, await oauth.token(b));
+        } catch (e) { if (e instanceof OAuthError) return send(res, e.status, { error: e.code, error_description: e.message }); throw e; }
+      }
       if (path === "/") { res.writeHead(302, { Location: "/app/" }); return void res.end(); }
       if (path.startsWith("/api/")) return await api(req, res, path, new URLSearchParams(qs));
       if (await serveStatic(req, res, path)) return;
@@ -51,7 +80,9 @@ export function createHttpApp(o: HttpOptions): http.Server {
       if (path !== "/mcp") return send(res, 404, { error: "NOT_FOUND" });
 
       const m = /^Bearer (.+)$/.exec(String(req.headers.authorization ?? ""));
-      if (!m || !safeEqual(m[1], o.token)) { res.setHeader("WWW-Authenticate", "Bearer"); return send(res, 401, { error: "UNAUTHORIZED" }); }
+      // Token fijo (CLI, scripts) o token OAuth emitido a un authorizer que aprobó la conexión.
+      const grant = m ? (safeEqual(m[1], o.token) ? { actor: o.actor ?? `mcp-http-${role}` } : await oauth.verifyAccess(m[1]).then(v => v && { actor: `mcp-oauth-${v.username}` })) : null;
+      if (!grant) { res.setHeader("WWW-Authenticate", `Bearer resource_metadata="${base}/.well-known/oauth-protected-resource"`); return send(res, 401, { error: "UNAUTHORIZED" }); }
       if (req.method !== "POST") return send(res, 405, { error: "METHOD_NOT_ALLOWED", message: "Servidor sin estado: usa POST." });
 
       const chunks: Buffer[] = []; let size = 0;
@@ -67,7 +98,7 @@ export function createHttpApp(o: HttpOptions): http.Server {
       try { body = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { return send(res, 400, { error: "INVALID_JSON" }); }
 
       // Instancia nueva por petición (sin estado); el rol lo fija el servidor, nunca el cliente.
-      const { server } = createServer({ store: o.store, role, actor: o.actor ?? `mcp-http-${role}`, modules, policy, runs });
+      const { server } = createServer({ store: o.store, role, actor: grant.actor, modules, policy, runs });
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
       res.on("close", () => { void transport.close(); void server.close(); });
       await server.connect(transport);

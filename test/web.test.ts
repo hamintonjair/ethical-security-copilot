@@ -158,3 +158,92 @@ test("logout cierra la sesión en el servidor y la auditoría queda íntegra", a
   const v = await ana.call("POST", "/api/audit/verify");
   assert.equal(v.json.ok, true);
 });
+
+/* ---------- OAuth (conexión de clientes MCP) ---------- */
+import { createHash, randomBytes } from "node:crypto";
+const REDIRECT = "https://claude.ai/api/mcp/auth_callback";
+const form = (o: Record<string, string>) => ({ method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(o).toString() });
+
+async function connect(ana: Client, redirect = REDIRECT) {
+  const reg = await fetch(base + "/oauth/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_name: "Claude", redirect_uris: [redirect] }) });
+  assert.equal(reg.status, 201);
+  const { client_id } = await reg.json() as any;
+  const verifier = randomBytes(40).toString("base64url");
+  const challenge = createHash("sha256").update(verifier).digest("base64url");
+  const q = { client_id, redirect_uri: redirect, response_type: "code", code_challenge: challenge, code_challenge_method: "S256", state: "xyz" };
+  return { client_id, verifier, q };
+}
+
+test("OAuth: descubrimiento, 401 con pista y flujo completo con PKCE", async () => {
+  const noTok = await fetch(base + "/mcp", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  assert.equal(noTok.status, 401);
+  assert.match(noTok.headers.get("www-authenticate") ?? "", /resource_metadata=".*\/\.well-known\/oauth-protected-resource"/);
+  const meta = await (await fetch(base + "/.well-known/oauth-authorization-server")).json() as any;
+  assert.deepEqual(meta.code_challenge_methods_supported, ["S256"]);
+  assert.equal((await (await fetch(base + "/.well-known/oauth-protected-resource")).json() as any).resource, base + "/mcp");
+
+  const ana = await as("ana");
+  const { client_id, verifier, q } = await connect(ana);
+  // /oauth/authorize redirige a la consola; ahí la persona inicia sesión y aprueba
+  const au = await fetch(base + "/oauth/authorize?" + new URLSearchParams(q), { redirect: "manual" });
+  assert.equal(au.status, 302); assert.match(au.headers.get("location") ?? "", /^\/app\/#\/autorizar\?/);
+  const info = await ana.call("GET", "/api/oauth/request?" + new URLSearchParams(q));
+  assert.equal(info.json.clientName, "Claude"); assert.equal(info.json.redirectHost, "claude.ai");
+  const ap = await ana.call("POST", "/api/oauth/approve", { ...q, decision: "allow" });
+  assert.equal(ap.status, 200, JSON.stringify(ap.json));
+  const back = new URL(ap.json.redirect);
+  assert.equal(back.origin + back.pathname, REDIRECT); assert.equal(back.searchParams.get("state"), "xyz");
+  const code = back.searchParams.get("code")!;
+
+  // PKCE incorrecto: falla y además quema el código
+  const bad = await fetch(base + "/oauth/token", form({ grant_type: "authorization_code", code, client_id, redirect_uri: REDIRECT, code_verifier: randomBytes(40).toString("base64url") }));
+  assert.equal(bad.status, 400);
+  assert.equal((await fetch(base + "/oauth/token", form({ grant_type: "authorization_code", code, client_id, redirect_uri: REDIRECT, code_verifier: verifier }))).status, 400);
+
+  // Flujo bueno con un código nuevo
+  const code2 = new URL((await ana.call("POST", "/api/oauth/approve", { ...q, decision: "allow" })).json.redirect).searchParams.get("code")!;
+  const tr = await fetch(base + "/oauth/token", form({ grant_type: "authorization_code", code: code2, client_id, redirect_uri: REDIRECT, code_verifier: verifier }));
+  assert.equal(tr.status, 200);
+  const tok = await tr.json() as any;
+  assert.equal(tok.token_type, "Bearer");
+  const mcp = (t: string) => fetch(base + "/mcp", { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", Authorization: `Bearer ${t}` }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) });
+  const ok = await mcp(tok.access_token);
+  assert.equal(ok.status, 200); assert.match(await ok.text(), /scan_initiate/);
+
+  // El refresh token rota: el viejo deja de servir
+  const rf = await fetch(base + "/oauth/token", form({ grant_type: "refresh_token", refresh_token: tok.refresh_token, client_id }));
+  assert.equal(rf.status, 200); const tok2 = await rf.json() as any;
+  assert.equal((await fetch(base + "/oauth/token", form({ grant_type: "refresh_token", refresh_token: tok.refresh_token, client_id }))).status, 400);
+  assert.equal((await mcp(tok2.access_token)).status, 200);
+
+  // Si la cuenta que autorizó se deshabilita, el acceso muere
+  const users = (await ana.call("GET", "/api/users")).json as any[];
+  const extra = (await ana.call("POST", "/api/users", { username: "jefe2", role: "authorizer", password: "otra-frase-larga-7" })).json;
+  assert.ok(extra.id);
+  const other = new Client(); assert.equal((await other.login("jefe2", "otra-frase-larga-7")).status, 200);
+  await other.call("POST", "/api/password", { current: "otra-frase-larga-7", next: "frase-nueva-larga-88" });
+  const c2 = await connect(other);
+  const code3 = new URL((await other.call("POST", "/api/oauth/approve", { ...c2.q, decision: "allow" })).json.redirect).searchParams.get("code")!;
+  const t3 = await (await fetch(base + "/oauth/token", form({ grant_type: "authorization_code", code: code3, client_id: c2.client_id, redirect_uri: REDIRECT, code_verifier: c2.verifier }))).json() as any;
+  assert.equal((await mcp(t3.access_token)).status, 200);
+  assert.equal((await ana.call("POST", `/api/users/${extra.id}/update`, { disabled: true })).status, 200);
+  assert.equal((await mcp(t3.access_token)).status, 401);
+  assert.ok(users.length > 0);
+});
+
+test("OAuth: redirect_uri sin registrar, sin PKCE, y roles que no pueden aprobar", async () => {
+  const ana = await as("ana"), alba = await as("alba");
+  const { q } = await connect(ana);
+  const evil = await fetch(base + "/oauth/authorize?" + new URLSearchParams({ ...q, redirect_uri: "https://evil.example/cb" }), { redirect: "manual" });
+  assert.equal(evil.status, 400); // jamás redirige a una URL no registrada
+  const noPkce = await fetch(base + "/oauth/authorize?" + new URLSearchParams({ ...q, code_challenge_method: "plain" }), { redirect: "manual" });
+  assert.equal(noPkce.status, 400);
+  assert.equal((await alba.call("POST", "/api/oauth/approve", { ...q, decision: "allow" })).status, 403);
+  assert.equal((await new Client().call("POST", "/api/oauth/approve", { ...q, decision: "allow" })).status, 401);
+  const deny = await ana.call("POST", "/api/oauth/approve", { ...q, decision: "deny" });
+  assert.equal(new URL(deny.json.redirect).searchParams.get("error"), "access_denied");
+  assert.equal(new URL(deny.json.redirect).searchParams.has("code"), false);
+  const reg = await fetch(base + "/oauth/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ redirect_uris: ["http://evil.example/cb"] }) });
+  assert.equal(reg.status, 400); // http solo en localhost
+  assert.equal((await fetch(base + "/oauth/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ redirect_uris: ["http://localhost:8080/cb"] }) })).status, 201);
+});

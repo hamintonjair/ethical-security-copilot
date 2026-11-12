@@ -9,6 +9,7 @@ import { createFinding } from "../findings.js";
 import { buildReport } from "../report.js";
 import { broadScopeProblem } from "../scope.js";
 import type { State } from "../state.js";
+import { OAuth, OAuthError } from "../oauth.js";
 import { Auth, WEB_ROLES, type Session, type WebRole } from "./auth.js";
 
 const COOKIE = "esc_session";
@@ -240,6 +241,26 @@ export function createApi(ctx: ApiCtx) {
     const r = await auth.resetPassword(params[0], String(body.password ?? ""), { actor: s.user.username, role: "authorizer" });
     if (!r.ok) throw new HttpError(400, "USER", r.error);
     return { ok: true };
+  });
+
+  /* ---------- Conexión de clientes MCP (OAuth) ---------- */
+  const oauth = new OAuth(store);
+  const OQ = ["client_id", "redirect_uri", "code_challenge", "code_challenge_method", "response_type", "state"];
+  const oauthErr = (e: unknown) => { if (e instanceof OAuthError) throw new HttpError(400, "OAUTH", e.message); throw e; };
+  route("GET", "/api/oauth/request", ["authorizer"], async ({ query }) => {
+    try { const r = await oauth.checkRequest(Object.fromEntries(OQ.map(k => [k, query.get(k) ?? undefined]))); return { clientName: r.clientName, redirectHost: new URL(r.redirectUri).host }; } catch (e) { return oauthErr(e); }
+  });
+  route("POST", "/api/oauth/approve", ["authorizer"], async ({ s, body }) => {
+    const p = Object.fromEntries(OQ.map(k => [k, body[k] === undefined ? undefined : String(body[k])])) as any;
+    try {
+      const info = await oauth.checkRequest(p);
+      const url = new URL(info.redirectUri);
+      if (p.state) url.searchParams.set("state", p.state);
+      if (body.decision !== "allow") { url.searchParams.set("error", "access_denied"); await store.audit({ ...who(s), action: "oauth:deny", payload: { client: info.clientName } }); return { redirect: url.toString() }; }
+      url.searchParams.set("code", await oauth.issueCode(s.user.id, p));
+      await store.audit({ ...who(s), action: "oauth:approve", payload: { client: info.clientName, host: url.host } });
+      return { redirect: url.toString() };
+    } catch (e) { return oauthErr(e); }
   });
 
   /* ---------- Despacho ---------- */
