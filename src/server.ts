@@ -101,8 +101,11 @@ export function createServer(deps: ServerDeps) {
       for (const target of targets as Target[]) {
         if (signal.aborted) break;
         const req = { assessmentId, actor: role, mode, module: moduleId, target, changesState: mod.manifest.changesState, params };
-        const dec = first && needsApproval ? await policy.check({ ...req, planId, approvalToken }) : first ? await policy.check(req) : await policy.recheck(req);
+        const admit = first && needsApproval ? () => policy.check({ ...req, planId, approvalToken }) : first ? () => policy.check(req) : () => policy.recheck(req);
         first = false;
+        // Igual que el Gateway: si solo falla por ritmo, se espera y se reintenta en vez de negar la operación.
+        let dec = await admit();
+        for (let i = 0; !dec.allow && dec.reasons.length === 1 && dec.reasons[0] === "RATE_LIMIT" && i < 60 && !signal.aborted; i++) { await new Promise(r => setTimeout(r, 200)); dec = await admit(); }
         if (!dec.allow) { denials.push({ target, reasons: dec.reasons }); continue; }
         const st = (await store.getAssessment(assessmentId))!.a.state as State;
         if (st === "approved") await store.transition(assessmentId, "executing", actor, role);
