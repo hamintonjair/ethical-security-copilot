@@ -2,6 +2,7 @@ import type { z } from "zod";
 import type { ModuleManifest } from "./schemas.js";
 import { Gateway, GatewayDenied, type Grant } from "./gateway.js";
 import { hostOf, type Target } from "./scope.js";
+import { webModules } from "./modules_web.js";
 
 type Manifest = z.infer<typeof ModuleManifest>;
 export interface Suggestion { title: string; severity: "info" | "low" | "medium" | "high" | "critical"; asset: string; detail: string }
@@ -87,6 +88,11 @@ export const httpHeaderAudit: Module = {
         if (!h[name]) { facts.push(`Ausente: ${name}`); suggestions.push({ title, severity, asset: url, detail: `La respuesta no incluye ${name}.` }); }
       }
       if (url.startsWith("https:") && !h["strict-transport-security"]) { facts.push("Ausente: strict-transport-security"); suggestions.push({ title: "Falta HSTS", severity: "low", asset: url, detail: "HTTPS sin Strict-Transport-Security." }); }
+      const hsts = String(h["strict-transport-security"] ?? "");
+      if (hsts) { const age = Number(/max-age=(\d+)/i.exec(hsts)?.[1] ?? 0); if (age < 15_552_000) { facts.push(`HSTS con max-age corto (${age} s)`); suggestions.push({ title: "HSTS con vigencia corta", severity: "low", asset: url, detail: `max-age=${age}; se recomienda al menos 6 meses (15552000). [A02:2025]` }); } }
+      for (const [name, title] of [["referrer-policy", "Falta Referrer-Policy"], ["permissions-policy", "Falta Permissions-Policy"]] as const) {
+        if (!h[name]) { facts.push(`Ausente: ${name}`); suggestions.push({ title, severity: "info", asset: url, detail: `La respuesta no incluye ${name}. [A02:2025]` }); }
+      }
       for (const name of ["server", "x-powered-by"] as const) {
         const v = String(h[name] ?? "");
         if (/\d+\.\d+/.test(v)) { facts.push(`Banner con versión: ${name}: ${v}`); suggestions.push({ title: `Divulgación de versión en ${name}`, severity: "low", asset: url, detail: `Cabecera ${name}: ${v}` }); }
@@ -107,4 +113,4 @@ export const labWriteProbe: Module = {
   },
 };
 
-export const builtinModules = (): Map<string, Module> => new Map([configAudit, tcpPortCheck, httpHeaderAudit, labWriteProbe].map(m => [m.manifest.id, m]));
+export const builtinModules = (): Map<string, Module> => new Map([configAudit, tcpPortCheck, httpHeaderAudit, labWriteProbe, ...webModules].map(m => [m.manifest.id, m]));

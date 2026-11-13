@@ -191,3 +191,13 @@ dialog .actions { display: flex; justify-content: flex-end; gap: 10px; margin-to
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
 .narrow { max-width: 620px; }
+
+/* Manual */
+.manual { max-width: 78ch; line-height: 1.6; }
+.manual h1 { font-family: var(--serif); font-size: 2rem; margin: 0 0 1rem; }
+.manual h2 { font-family: var(--serif); font-size: 1.35rem; margin: 2.2rem 0 .6rem; padding-top: 1rem; border-top: 1px solid var(--line, #cfd6de); }
+.manual h3 { font-size: 1.05rem; margin: 1.5rem 0 .3rem; }
+.manual p, .manual ul, .manual ol { margin: .5rem 0; }
+.manual ul, .manual ol { padding-left: 1.3rem; }
+.manual code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .88em; background: rgba(36, 50, 168, .08); padding: .05em .35em; border-radius: 3px; }
+.manual .table-wrap { margin: .8rem 0; background: var(--surface, #fff); border: 1px solid var(--line, #cfd6de); border-radius: 6px; }

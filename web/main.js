@@ -4,6 +4,7 @@ import { assessmentsView, newAssessmentView } from "./views/assessments.js";
 import { assessmentView } from "./views/assessment.js";
 import { auditView } from "./views/audit.js";
 import { usersView } from "./views/users.js";
+import { manualView } from "./views/manual.js";
 import { authorizeView } from "./views/authorize.js";
 import { accountView } from "./views/account.js";
 
@@ -44,7 +45,7 @@ function loginScreen(notice) {
 }
 
 /* ---------- Estructura general ---------- */
-const NAV = [["#/", "Panel", () => true], ["#/evaluaciones", "Evaluaciones", () => true], ["#/auditoria", "Auditoría", () => ctx.can("audit")], ["#/usuarios", "Usuarios", () => ctx.can("users")], ["#/cuenta", "Mi cuenta", () => true]];
+const NAV = [["#/", "Panel", () => true], ["#/evaluaciones", "Evaluaciones", () => true], ["#/auditoria", "Auditoría", () => ctx.can("audit")], ["#/usuarios", "Usuarios", () => ctx.can("users")], ["#/manual", "Manual", () => true], ["#/cuenta", "Mi cuenta", () => true]];
 let crumb, killSlot, killBar, content, navEl;
 
 function shell() {
@@ -101,6 +102,7 @@ const ROUTES = [
   [new RegExp(`^#/evaluaciones/${UUID}(?:/(\\w+))?$`), (m) => assessmentView(ctx, m[1], m[2])],
   [/^#\/auditoria$/, () => auditView(ctx)],
   [/^#\/usuarios$/, () => usersView(ctx)],
+  [/^#\/manual$/, () => manualView(ctx)],
   [/^#\/cuenta$/, () => accountView(ctx)],
   [/^#\/autorizar\?/, () => authorizeView(ctx)],
 ];

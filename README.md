@@ -66,3 +66,9 @@ La contraseña se pide oculta y deberá cambiarse al primer acceso. Otros comand
 ## Conectar Claude (OAuth)
 
 El servidor MCP acepta, además del token fijo `ESC_HTTP_TOKEN`, OAuth 2.1 con PKCE (registro dinámico de clientes). En Claude: *Conectores → Agregar conector personalizado* con `https://<tu-servicio>.onrender.com/mcp`. Se abrirá la consola para que un **authorizer** inicie sesión y apruebe la conexión. El token resultante solo da el rol de agente del MCP (nunca permisos de la consola), caduca en 1 h con refresh rotatorio, y deja de valer si esa cuenta se deshabilita o deja de ser authorizer.
+
+## Módulos y manual
+
+Módulos incluidos: `config_audit`, `tcp_port_check`, `http_header_audit`, `tls_audit`, `cookie_audit`, `cors_audit`, `http_methods_audit`, `dns_email_audit`, `exposed_files_audit` y `lab_write_probe`. Todos son de solo lectura o de impacto mínimo y pasan por el Gateway (alcance, ventana, ritmo, kill switch).
+
+El manual de uso (conceptos, flujo, catálogo de módulos, mapa de cobertura frente a OWASP/MITRE, solución de problemas) está en [`web/manual.md`](web/manual.md) y en el menú **Manual** de la consola.

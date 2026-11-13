@@ -35,6 +35,12 @@ const MODULE_LABELS: Record<string, { title: string; description: string }> = {
   config_audit: { title: "Análisis de configuración", description: "Revisa texto de configuración que tú aportas. No usa la red." },
   tcp_port_check: { title: "Prueba de puertos TCP", description: "Comprueba si hasta 32 puertos de un host aceptan conexiones." },
   http_header_audit: { title: "Cabeceras HTTP", description: "Lee solo las cabeceras de seguridad y los banners de versión." },
+  tls_audit: { title: "Cifrado TLS y certificado", description: "Versiones de TLS, cifrado negociado, vigencia y confianza del certificado. Solo el apretón de manos, sin enviar datos." },
+  cookie_audit: { title: "Cookies", description: "Revisa Secure, HttpOnly y SameSite de las cookies que establece la página. Nunca guarda sus valores." },
+  cors_audit: { title: "CORS", description: "Comprueba si el sitio deja que otros orígenes lean sus respuestas. 3 peticiones inofensivas." },
+  http_methods_audit: { title: "Métodos HTTP", description: "Lee los métodos que anuncia el servidor y si TRACE está activo. No envía PUT ni DELETE." },
+  dns_email_audit: { title: "DNS y correo (SPF, DKIM, DMARC)", description: "Consulta registros públicos para ver si el dominio se puede suplantar por correo. Solo activo." },
+  exposed_files_audit: { title: "Archivos expuestos", description: "Busca 13 rutas sensibles conocidas (.git, .env, copias). Reconoce la firma del archivo sin guardar su contenido." },
   lab_write_probe: { title: "Escritura de laboratorio", description: "Envía un POST inofensivo con marcador. Cambia estado: exige aprobación." },
 };
 
