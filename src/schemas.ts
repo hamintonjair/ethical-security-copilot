@@ -141,6 +141,34 @@ export const ReportGenerateIn = z.object({
   includeStates: z.array(z.enum(["confirmed", "unverified"])).default(["confirmed"]),
 });
 
+/* ---------- Incidentes (Respuesta a Incidentes / Defensa Activa) ----------
+   Solo analiza evidencia que la organización aporta y genera reglas/informes para que ELLOS
+   los apliquen en su propia infraestructura. No abre ninguna conexión de red. */
+export const IncidentCreateIn = z.object({
+  organization: z.string().min(1).max(200),
+  contactName: z.string().min(1).max(200),
+  contactEmail: z.string().email(),
+  summary: z.string().min(5).max(2000),
+  affectedAssets: z.array(z.string().max(200)).max(50).default([]),
+});
+export const IncidentEvidenceIn = z.object({
+  incidentId: z.string().uuid(),
+  kind: z.enum(["log", "email_headers", "other"]),
+  description: z.string().min(1).max(300),
+  content: z.string().min(1).max(50_000),
+});
+export const IncidentContainIn = z.object({
+  incidentId: z.string().uuid(),
+  ips: z.array(z.string()).max(500).default([]),
+  domains: z.array(z.string()).max(200).default([]),
+  targets: z.enum(["firewall", "nginx", "cloudflare", "all"]).default("all"),
+});
+export const IncidentReportIn = z.object({
+  incidentId: z.string().uuid(),
+  format: z.enum(["markdown", "json"]).default("markdown"),
+});
+export const IncidentStatus = z.enum(["open", "contained", "closed"]);
+
 /* ---------- Auditoría (hash chain) ---------- */
 export const AuditEntry = z.object({
   seq: z.number().int(),
@@ -157,9 +185,9 @@ export const AuditEntry = z.object({
 
 /* ---------- Permisos por rol ---------- */
 export const RolePermissions: Record<z.infer<typeof Role>, string[]> = {
-  authorizer: ["assessment_create", "scope_validate", "scan_stop"],
-  operator:   ["scope_validate", "scan_initiate", "scan_stop", "approve_plan"],
-  analyst:    ["scope_validate", "finding_create", "report_generate"],
-  agent:      ["scope_validate", "scan_initiate", "scan_stop", "finding_create", "report_generate"], // scan_initiate queda en "pending_approval" hasta que un operator apruebe
-  auditor:    ["audit_read", "report_generate"],
+  authorizer: ["assessment_create", "scope_validate", "scan_stop", "incident_open", "incident_evidence_analyze", "incident_contain_plan", "incident_report"],
+  operator:   ["scope_validate", "scan_initiate", "scan_stop", "approve_plan", "incident_open", "incident_evidence_analyze", "incident_contain_plan", "incident_report"],
+  analyst:    ["scope_validate", "finding_create", "report_generate", "incident_evidence_analyze", "incident_contain_plan", "incident_report"],
+  agent:      ["scope_validate", "scan_initiate", "scan_stop", "finding_create", "report_generate", "incident_evidence_analyze", "incident_contain_plan", "incident_report"], // nunca abre el caso ni cierra el incidente: eso lo decide un humano
+  auditor:    ["audit_read", "report_generate", "incident_report"],
 };

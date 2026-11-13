@@ -55,6 +55,21 @@ El agente (Claude) tiene su propio rol, limitado: puede validar alcances, propon
 
 Si cambias el alcance, usa **Nueva versión del alcance**: vuelve a borrador, se anulan las aprobaciones de planes anteriores y hay que repetir el ciclo. Los hallazgos ya registrados se conservan.
 
+## 6. Incidentes: Respuesta a Incidentes / Defensa Activa
+
+Para cuando a la organización la están atacando **ahora mismo**. Es una sesión aparte de las evaluaciones, pensada para la urgencia. Mantiene el mismo límite ético: **nunca toca la red de nadie**, ni la del atacante ni la tuya. Solo analiza lo que tú le pegas (logs, cabeceras de correo) y genera reglas e informes para que **tu propio equipo** los aplique en **su propia infraestructura**. Cerrar el paso, no contraatacar: entrar a los sistemas del atacante es ilegal (en Colombia, Ley 1273 de 2009) aunque haya empezado él.
+
+1. **Abrir el caso** (autorizador u operador): organización, quién reporta, qué está pasando, activos afectados.
+2. **Añadir evidencia**: pega líneas de log o las cabeceras completas de un correo sospechoso. Se analiza al instante:
+   - **Logs**: extrae IPs, dominios, URLs y hashes; detecta patrones de inyección SQL, XSS, path traversal, inyección de comandos, rastreo de rutas sensibles, firmas de herramientas de escaneo (sqlmap, nikto, nmap…) y fuerza bruta/credential stuffing (5+ fallos de autenticación desde la misma IP).
+   - **Cabeceras de correo**: compara el remitente visible (`From`) con el real (`Return-Path`) y `Reply-To`, y lee `Authentication-Results` para ver si SPF/DKIM/DMARC fallaron. Es la forma más rápida de confirmar un phishing en curso.
+   - El contenido se guarda redactado (sin credenciales ni tokens) y nunca se muestra más allá de lo necesario.
+3. **Plan de contención**: con las IPs/dominios acumulados de toda la evidencia, genera reglas listas para pegar: `iptables`, `ufw`, un bloque `nginx deny`, una regla de Cloudflare (Firewall Rules / WAF) y una lista de dominios sospechosos. **Nada se ejecuta**: las aplicas tú mismo en tu firewall, tu servidor o tu panel.
+4. **Informe**: línea de tiempo de la evidencia, todos los IOCs acumulados, y a quién reportar: el *abuse contact* del hosting del atacante (`whois <ip>`), el CSIRT nacional (**colCERT** en Colombia, más la Policía Nacional - Centro Cibernético, para denuncia formal), o el CERT de tu país si no es Colombia. Incluye cómo preservar evidencia para una denuncia.
+5. **Estados**: *Abierto → Contenido → Cerrado*. Un incidente cerrado no admite más evidencia ni se puede reabrir.
+
+Pídeselo a Claude, por ejemplo: «Analiza este log del incidente `<id>` y dime qué encuentra» o «Genera el plan de contención con las IPs que ya encontramos».
+
 ## 6. Catálogo de módulos
 
 Todos son de solo lectura o de impacto mínimo. Ninguno explota vulnerabilidades. Las referencias son del OWASP Top 10 2025 (A0x), OWASP API Top 10 2023 (APIx) y CWE.

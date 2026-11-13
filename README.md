@@ -72,3 +72,9 @@ El servidor MCP acepta, además del token fijo `ESC_HTTP_TOKEN`, OAuth 2.1 con P
 Módulos incluidos: `config_audit`, `tcp_port_check`, `http_header_audit`, `tls_audit`, `cookie_audit`, `cors_audit`, `http_methods_audit`, `dns_email_audit`, `exposed_files_audit` y `lab_write_probe`. Todos son de solo lectura o de impacto mínimo y pasan por el Gateway (alcance, ventana, ritmo, kill switch).
 
 El manual de uso (conceptos, flujo, catálogo de módulos, mapa de cobertura frente a OWASP/MITRE, solución de problemas) está en [`web/manual.md`](web/manual.md) y en el menú **Manual** de la consola.
+
+## Incidentes: Respuesta a Incidentes / Defensa Activa
+
+Sesión aparte de las evaluaciones, para cuando la organización está siendo atacada ahora mismo. Analiza evidencia que tú aportas (logs, cabeceras de correo) para extraer IOCs y patrones de ataque, genera reglas de contención (iptables, ufw, nginx, Cloudflare) y el informe del caso con guía de a quién reportarlo. No toca ninguna red: las reglas se generan para que el propio equipo las aplique en su infraestructura.
+
+Herramientas MCP: `incident_open` (solo autorizador/operador), `incident_evidence_analyze`, `incident_contain_plan`, `incident_report`.

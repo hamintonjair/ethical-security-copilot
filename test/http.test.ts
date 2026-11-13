@@ -68,7 +68,7 @@ test("cliente MCP real por HTTP: herramientas, alcance y rol fijado por el servi
   const client = new Client({ name: "t", version: "1" });
   await client.connect(new StreamableHTTPClientTransport(new URL(base + "/mcp"), { requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } } }));
   const names = (await client.listTools()).tools.map(t => t.name).sort();
-  assert.deepEqual(names, ["assessment_create", "finding_create", "report_generate", "scan_initiate", "scan_stop", "scope_validate"]);
+  assert.deepEqual(names, ["assessment_create", "finding_create", "incident_contain_plan", "incident_evidence_analyze", "incident_open", "incident_report", "report_generate", "scan_initiate", "scan_stop", "scope_validate"]);
   const call = async (name: string, args: Record<string, unknown>) => JSON.parse(((await client.callTool({ name, arguments: args })) as any).content[0].text);
   assert.equal((await call("scope_validate", { assessmentId: id, target: { type: "ip", value: "127.0.0.1" } })).authorized, true);
   assert.equal((await call("scope_validate", { assessmentId: id, target: { type: "ip", value: "8.8.8.8" } })).authorized, false);

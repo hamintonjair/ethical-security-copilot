@@ -51,7 +51,7 @@ async function boot(role: "agent" | "authorizer", store: Store) {
 test("las 6 herramientas MCP están publicadas", async () => {
   const { client } = await boot("agent", await Store.open("memory", KEY));
   const names = (await client.listTools()).tools.map(t => t.name).sort();
-  assert.deepEqual(names, ["assessment_create", "finding_create", "report_generate", "scan_initiate", "scan_stop", "scope_validate"]);
+  assert.deepEqual(names, ["assessment_create", "finding_create", "incident_contain_plan", "incident_evidence_analyze", "incident_open", "incident_report", "report_generate", "scan_initiate", "scan_stop", "scope_validate"]);
 });
 
 test("el LLM no puede crear autorizaciones; el authorizer sí", async () => {

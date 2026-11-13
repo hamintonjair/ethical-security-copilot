@@ -5,12 +5,13 @@ import { assessmentView } from "./views/assessment.js";
 import { auditView } from "./views/audit.js";
 import { usersView } from "./views/users.js";
 import { manualView } from "./views/manual.js";
+import { incidentsView, incidentView } from "./views/incidents.js";
 import { authorizeView } from "./views/authorize.js";
 import { accountView } from "./views/account.js";
 
 const root = document.getElementById("root");
 const ctx = { me: null, kill: null };
-const PERM = { kill: ["authorizer", "operator"], release: ["authorizer"], audit: ["authorizer", "operator", "auditor"], users: ["authorizer"], createAssessment: ["authorizer"], advance: ["authorizer"], decidePlan: ["authorizer", "operator"], findings: ["authorizer", "operator", "analyst"], finalize: ["authorizer", "operator", "analyst"] };
+const PERM = { kill: ["authorizer", "operator"], release: ["authorizer"], audit: ["authorizer", "operator", "auditor"], users: ["authorizer"], createAssessment: ["authorizer"], advance: ["authorizer"], decidePlan: ["authorizer", "operator"], findings: ["authorizer", "operator", "analyst"], finalize: ["authorizer", "operator", "analyst"], openIncident: ["authorizer", "operator"], incidentWork: ["authorizer", "operator", "analyst"] };
 ctx.can = (a) => !!ctx.me && PERM[a].includes(ctx.me.user.role);
 ctx.go = (hash) => { if (location.hash === hash) renderRoute(); else location.hash = hash; };
 ctx.refreshKill = async () => { const r = await api("GET", "/api/me"); ctx.kill = r.killSwitch; paintKill(); };
@@ -45,7 +46,7 @@ function loginScreen(notice) {
 }
 
 /* ---------- Estructura general ---------- */
-const NAV = [["#/", "Panel", () => true], ["#/evaluaciones", "Evaluaciones", () => true], ["#/auditoria", "Auditoría", () => ctx.can("audit")], ["#/usuarios", "Usuarios", () => ctx.can("users")], ["#/manual", "Manual", () => true], ["#/cuenta", "Mi cuenta", () => true]];
+const NAV = [["#/", "Panel", () => true], ["#/evaluaciones", "Evaluaciones", () => true], ["#/auditoria", "Auditoría", () => ctx.can("audit")], ["#/usuarios", "Usuarios", () => ctx.can("users")], ["#/incidentes", "Incidentes", () => true], ["#/manual", "Manual", () => true], ["#/cuenta", "Mi cuenta", () => true]];
 let crumb, killSlot, killBar, content, navEl;
 
 function shell() {
@@ -102,6 +103,8 @@ const ROUTES = [
   [new RegExp(`^#/evaluaciones/${UUID}(?:/(\\w+))?$`), (m) => assessmentView(ctx, m[1], m[2])],
   [/^#\/auditoria$/, () => auditView(ctx)],
   [/^#\/usuarios$/, () => usersView(ctx)],
+  [/^#\/incidentes$/, () => incidentsView(ctx)],
+  [new RegExp(`^#/incidentes/${UUID}$`), (m) => incidentView(ctx, m[1])],
   [/^#\/manual$/, () => manualView(ctx)],
   [/^#\/cuenta$/, () => accountView(ctx)],
   [/^#\/autorizar\?/, () => authorizeView(ctx)],

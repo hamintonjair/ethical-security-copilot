@@ -247,3 +247,31 @@ test("OAuth: redirect_uri sin registrar, sin PKCE, y roles que no pueden aprobar
   assert.equal(reg.status, 400); // http solo en localhost
   assert.equal((await fetch(base + "/oauth/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ redirect_uris: ["http://localhost:8080/cb"] }) })).status, 201);
 });
+
+/* ---------- Incidentes (Respuesta a Incidentes / Defensa Activa) ---------- */
+test("incidentes: abrir, analizar evidencia, contención, informe y roles", async () => {
+  const ana = await as("ana"), alba = await as("alba"), aud = await as("aud");
+  assert.equal((await alba.call("POST", "/api/incidents", { organization: "X", contactName: "x", contactEmail: "a@a.test", summary: "x".repeat(10) })).status, 403);
+  const open = await ana.call("POST", "/api/incidents", { organization: "Acme S.A.", contactName: "Ana", contactEmail: "ana@acme.test", summary: "Ataque en curso contra el sitio web." });
+  assert.equal(open.status, 200, JSON.stringify(open.json));
+  const id = open.json.id;
+
+  const ev = await alba.call("POST", `/api/incidents/${id}/evidence`, { kind: "log", description: "log 1", content: "203.0.113.9 login failed\n203.0.113.9 login failed\n203.0.113.9 login failed\n203.0.113.9 login failed\n203.0.113.9 login failed" });
+  assert.equal(ev.status, 200, JSON.stringify(ev.json));
+  assert.ok(ev.json.iocs.ips.includes("203.0.113.9"));
+
+  const bad = await alba.call("POST", `/api/incidents/${id}/evidence`, { kind: "log", description: "x", content: "x".repeat(50_001) });
+  assert.equal(bad.status, 400);
+
+  const contain = await alba.call("POST", `/api/incidents/${id}/contain`, { ips: ["203.0.113.9"], domains: [], targets: "firewall" });
+  assert.equal(contain.status, 200); assert.match(contain.json.rules["iptables.sh"], /203\.0\.113\.9/);
+
+  const rep = await aud.call("GET", `/api/incidents/${id}/report?format=markdown`);
+  assert.equal(rep.status, 200); assert.match(rep.json.text, /colCERT/);
+
+  assert.equal((await ana.call("POST", `/api/incidents/${id}/status`, { status: "contained" })).status, 200);
+  assert.equal((await ana.call("POST", `/api/incidents/${id}/status`, { status: "closed" })).status, 200);
+  const afterClose = await alba.call("POST", `/api/incidents/${id}/evidence`, { kind: "log", description: "tarde", content: "203.0.113.9 fail" });
+  assert.equal(afterClose.status, 400); assert.equal(afterClose.json.error, "INCIDENT_CLOSED");
+  assert.equal((await ana.call("POST", `/api/incidents/${id}/status`, { status: "open" })).status, 400);
+});

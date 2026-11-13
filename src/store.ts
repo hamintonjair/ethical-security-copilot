@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { AssessmentInput, Assessment } from "./schemas.js";
+import { AssessmentInput, Assessment, type Role } from "./schemas.js";
 import { canonical, sha256, sign, verifySignature, newToken } from "./crypto.js";
 import { canTransition, type State } from "./state.js";
 import { redact } from "./redact.js";
@@ -82,6 +82,57 @@ export class Store {
     const signatureValid = recomputed === r.content_hash && verifySignature(this.signingKey, r.content_hash, r.signature);
     const a = Assessment.parse({ ...content, id: r.id, version, state: r.state, contentHash: r.content_hash, signature: r.signature, createdBy: r.created_by, createdAt: iso(r.created_at) });
     return { a, signatureValid };
+  }
+
+
+  /* ---------- Incidentes (Respuesta a Incidentes / Defensa Activa) ---------- */
+  async createIncident(input: { organization: string; contactName: string; contactEmail: string; summary: string; affectedAssets: string[] }, createdBy: string) {
+    const id = randomUUID(), createdAt = new Date().toISOString();
+    await this.db.query(
+      `insert into public.incidents (id, organization, contact_name, contact_email, summary, affected_assets, created_by, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [id, input.organization, input.contactName, input.contactEmail, input.summary, JSON.stringify(input.affectedAssets), createdBy, createdAt]);
+    await this.audit({ actor: createdBy, role: "authorizer", action: "incident:open", assessmentId: id, payload: { organization: input.organization } });
+    return { id, status: "open" as const, createdAt, createdBy, ...input };
+  }
+
+  private incidentRow(r: any) {
+    return { id: r.id, organization: r.organization, contactName: r.contact_name, contactEmail: r.contact_email, summary: r.summary,
+      affectedAssets: r.affected_assets, status: r.status, createdBy: r.created_by, createdAt: iso(r.created_at), closedAt: r.closed_at ? iso(r.closed_at) : null };
+  }
+
+  async getIncident(id: string) {
+    const r = (await this.db.query("select * from public.incidents where id=$1", [id]))[0];
+    if (!r) return null;
+    const evidence = (await this.db.query("select * from public.incident_evidence where incident_id=$1 order by created_at asc", [id]))
+      .map(e => ({ id: e.id, kind: e.kind, description: e.description, redactedContent: e.redacted_content, iocs: e.iocs, createdBy: e.created_by, createdAt: iso(e.created_at) }));
+    return { incident: this.incidentRow(r), evidence };
+  }
+
+  async listIncidents() {
+    return (await this.db.query("select i.*, (select count(*) from public.incident_evidence e where e.incident_id = i.id) evidence_count from public.incidents i order by created_at desc"))
+      .map(r => ({ ...this.incidentRow(r), evidenceCount: Number(r.evidence_count) }));
+  }
+
+  async addIncidentEvidence(incidentId: string, e: { kind: string; description: string; redactedContent: string; iocs: unknown }, actor: string) {
+    const r = (await this.db.query("select status from public.incidents where id=$1", [incidentId]))[0];
+    if (!r) return null;
+    if (r.status === "closed") return "CLOSED" as const;
+    const id = randomUUID(), createdAt = new Date().toISOString();
+    await this.db.query("insert into public.incident_evidence (id, incident_id, kind, description, redacted_content, iocs, created_by, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8)",
+      [id, incidentId, e.kind, e.description, e.redactedContent, JSON.stringify(e.iocs), actor, createdAt]);
+    await this.audit({ actor, role: "analyst", action: "incident:evidence_added", assessmentId: incidentId, payload: { kind: e.kind, description: e.description } });
+    return { id, createdAt };
+  }
+
+  async setIncidentStatus(id: string, status: "open" | "contained" | "closed", actor: string, role: Role) {
+    const cur = (await this.db.query("select status from public.incidents where id=$1", [id]))[0];
+    if (!cur) return false;
+    const order = ["open", "contained", "closed"];
+    if (order.indexOf(status) < order.indexOf(cur.status) && !(cur.status === "closed")) { /* se permite retroceder de contained a open */ }
+    if (cur.status === "closed") return false; // un incidente cerrado no cambia de estado
+    await this.db.query("update public.incidents set status=$2, closed_at=case when $2='closed' then now() else closed_at end where id=$1", [id, status]);
+    await this.audit({ actor, role, action: "incident:status", assessmentId: id, payload: { from: cur.status, to: status } });
+    return true;
   }
 
   /** Cambia de estado solo por transiciones válidas; atómico (compara el estado previo). */

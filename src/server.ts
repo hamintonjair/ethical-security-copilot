@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
   AssessmentCreateIn, ScopeValidateIn, ScanInitiateIn, ScanStopIn, FindingInput, ReportGenerateIn, RolePermissions, Role,
+  IncidentCreateIn, IncidentEvidenceIn, IncidentContainIn, IncidentReportIn,
 } from "./schemas.js";
 import { Store } from "./store.js";
 import { PolicyEngine } from "./policy.js";
@@ -13,6 +14,7 @@ import { redact } from "./redact.js";
 import type { State } from "./state.js";
 import { createFinding } from "./findings.js";
 import { buildReport } from "./report.js";
+import { analyzeLog, analyzeEmailHeaders, containmentRules, buildIncidentReport, MAX_EVIDENCE_CHARS } from "./incident.js";
 
 type RoleT = z.infer<typeof Role>;
 const json = (o: unknown, isError = false) => ({ content: [{ type: "text" as const, text: JSON.stringify(o, null, 2) }], ...(isError ? { isError: true } : {}) });
@@ -149,6 +151,56 @@ export function createServer(deps: ServerDeps) {
     const d = await allowed("report_generate", assessmentId); if (d) return d;
     const r = await buildReport(store, { assessmentId, format, includeStates: includeStates as string[], advance: true, actor, role });
     return r.ok ? { content: [{ type: "text" as const, text: r.text }] } : json({ error: r.error }, true);
+  });
+
+  /* 7. incident_open — solo humanos (authorizer/operator) abren el caso */
+  server.registerTool("incident_open", {
+    description: "Abre un caso de Respuesta a Incidentes / Defensa Activa (organización bajo ataque ahora mismo). No ejecuta nada en ninguna red.",
+    inputSchema: IncidentCreateIn.shape,
+  }, async (input) => {
+    const d = await allowed("incident_open"); if (d) return d;
+    const inc = await store.createIncident(input, actor);
+    return json({ incidentId: inc.id, status: inc.status });
+  });
+
+  /* 8. incident_evidence_analyze — analiza lo que la organización pega (log o cabeceras de correo); nunca abre red */
+  server.registerTool("incident_evidence_analyze", {
+    description: "Analiza evidencia aportada (líneas de log o cabeceras de correo) para extraer IOCs y patrones de ataque. Solo lee el texto que se le pasa; no se conecta a ninguna red.",
+    inputSchema: IncidentEvidenceIn.shape,
+  }, async ({ incidentId, kind, description, content }) => {
+    const d = await allowed("incident_evidence_analyze", incidentId); if (d) return d;
+    if (content.length > MAX_EVIDENCE_CHARS) return json({ error: "CONTENT_TOO_LARGE", message: `Máximo ${MAX_EVIDENCE_CHARS} caracteres.` }, true);
+    const r = kind === "email_headers" ? analyzeEmailHeaders(content) : analyzeLog(content);
+    const redacted = redact(content, 8000);
+    const saved = await store.addIncidentEvidence(incidentId, { kind, description, redactedContent: redacted, iocs: r.iocs }, actor);
+    if (saved === null) return json({ error: "INCIDENT_NOT_FOUND" }, true);
+    if (saved === "CLOSED") return json({ error: "INCIDENT_CLOSED", message: "Este incidente ya está cerrado." }, true);
+    return json({ facts: r.facts, patterns: r.patterns, iocs: r.iocs, evidenceId: saved.id });
+  });
+
+  /* 9. incident_contain_plan — genera reglas; SIEMPRE para que el propio equipo las aplique en su infraestructura */
+  server.registerTool("incident_contain_plan", {
+    description: "Genera reglas de bloqueo (firewall, nginx, Cloudflare) a partir de IPs/dominios atacantes, para que el equipo de la organización las aplique en SU PROPIA infraestructura. No las ejecuta ni se conecta a ningún sistema.",
+    inputSchema: IncidentContainIn.shape,
+  }, async ({ incidentId, ips, domains, targets }) => {
+    const d = await allowed("incident_contain_plan", incidentId); if (d) return d;
+    const rec = await store.getIncident(incidentId);
+    if (!rec) return json({ error: "INCIDENT_NOT_FOUND" }, true);
+    const rules = containmentRules(ips, domains, targets);
+    await store.audit({ actor, role, action: "incident:contain_plan", assessmentId: incidentId, payload: { ips: ips.length, domains: domains.length, targets } });
+    return json({ rules, note: "Estas reglas no se han aplicado en ningún lado. Revísalas y aplícalas tú mismo en tu firewall, tu nginx o tu panel de Cloudflare." });
+  });
+
+  /* 10. incident_report */
+  server.registerTool("incident_report", {
+    description: "Genera el informe del incidente: IOCs acumulados, línea de tiempo de evidencia y a quién reportarlo.",
+    inputSchema: IncidentReportIn.shape,
+  }, async ({ incidentId, format }) => {
+    const d = await allowed("incident_report", incidentId); if (d) return d;
+    const rec = await store.getIncident(incidentId);
+    if (!rec) return json({ error: "INCIDENT_NOT_FOUND" }, true);
+    const text = buildIncidentReport(rec.incident, rec.evidence, format);
+    return { content: [{ type: "text" as const, text }] };
   });
 
   return { server, policy, store };
