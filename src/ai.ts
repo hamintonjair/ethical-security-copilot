@@ -3,7 +3,7 @@
 // permisos que RolePermissions.agent ya tiene por MCP — nunca abre ni cierra un caso, nunca aprueba
 // un plan, nunca toca ninguna red por sí solo.
 import type { Store } from "./store.js";
-import { analyzeLog, analyzeEmailHeaders, containmentRules, buildIncidentReport, MAX_EVIDENCE_CHARS } from "./incident.js";
+import { analyzeLog, analyzeEmailHeaders, containmentRules, buildIncidentReport, suggestIncidentTypes, TYPE_GUIDANCE, MAX_EVIDENCE_CHARS } from "./incident.js";
 import { createFinding } from "./findings.js";
 import { buildReport } from "./report.js";
 import { redact } from "./redact.js";
@@ -80,6 +80,13 @@ const INCIDENT_TOOLS: ToolDef[] = [
     }, required: ["kind", "description", "content"] },
   },
   {
+    name: "incident_types_set",
+    description: "Marca (o reemplaza) los tipos de incidente del caso. SOLO se debe llamar después de que el humano haya confirmado explícitamente en el chat cuáles tipos quiere marcar — nunca a partir de una sugerencia sin que el humano la haya aprobado.",
+    input_schema: { type: "object", properties: {
+      types: { type: "array", items: { type: "string", enum: ["phishing_email", "network_intrusion", "malware_ransomware", "ddos", "data_breach", "unauthorized_access", "web_attack", "other"] } },
+    }, required: ["types"] },
+  },
+  {
     name: "incident_contain_plan",
     description: "Genera reglas de bloqueo (firewall, nginx, Cloudflare) a partir de IPs/dominios para que el equipo humano las aplique en SU PROPIA infraestructura. No ejecuta nada.",
     input_schema: { type: "object", properties: {
@@ -112,8 +119,9 @@ export async function runIncidentAssistant(opts: {
   const system = `Eres el asistente de IA del módulo de Incidentes de "Ethical Security Copilot", dentro de la propia plataforma (no por MCP). ` +
     `Ámbito estricto: SOLO analizas evidencia que el humano te da y generas texto para que ÉL decida y aplique — nunca te conectas a ninguna red, nunca ejecutas nada, ` +
     `nunca abres ni cierras el caso (eso solo lo hace un humano). "Cerrar el paso, no contraatacar": jamás propongas ni describas atacar, acceder o dañar sistemas de terceros, ` +
-    `ni siquiera los del presunto atacante. Responde siempre en español, de forma clara y concreta. Usa las herramientas disponibles cuando el humano pida contención o un informe.\n\n` +
-    `Caso: ${rec.incident.organization} — ${rec.incident.summary}\nEstado: ${rec.incident.status}\n\n${evidenceSummary}`;
+    `ni siquiera los del presunto atacante. Responde siempre en español, de forma clara y concreta. Usa las herramientas disponibles cuando el humano pida contención o un informe. ` +
+    `IMPORTANTE sobre incident_types_set: cuando incident_evidence_analyze te devuelva "suggestedTypes", son solo sugerencias — pregúntale primero al humano cuáles quiere marcar y llama a incident_types_set solo con los que él confirme, nunca con todos automáticamente.\n\n` +
+    `Caso: ${rec.incident.organization} — ${rec.incident.summary}\nEstado: ${rec.incident.status}\nTipos ya marcados: ${rec.incident.types?.length ? rec.incident.types.join(", ") : "ninguno todavía"}\n\n${evidenceSummary}`;
 
   const execTool = async (name: string, input: Record<string, unknown>): Promise<unknown> => {
     const actor = aiActor(requestedBy);
@@ -123,7 +131,15 @@ export async function runIncidentAssistant(opts: {
       const r = kind === "email_headers" ? analyzeEmailHeaders(content) : analyzeLog(content);
       const saved = await store.addIncidentEvidence(incidentId, { kind, description: String(input.description ?? "evidencia aportada en el chat de IA"), redactedContent: redact(content, 8000), iocs: r.iocs }, actor);
       if (saved === null || saved === "CLOSED") return { error: "no se pudo guardar la evidencia" };
-      return { evidenceId: saved.id, facts: r.facts, patterns: r.patterns, iocs: r.iocs };
+      const suggestedTypes = suggestIncidentTypes(kind, r.patterns).map((s) => ({ ...s, guidance: TYPE_GUIDANCE[s.type] }));
+      return { evidenceId: saved.id, facts: r.facts, patterns: r.patterns, iocs: r.iocs, suggestedTypes,
+        note: suggestedTypes.length ? "Son sugerencias de tipo de incidente; pregúntale al humano si quiere marcarlas antes de llamar a incident_types_set." : undefined };
+    }
+    if (name === "incident_types_set") {
+      const types = Array.isArray(input.types) ? input.types.map(String) : [];
+      const ok = await store.setIncidentTypes(incidentId, types, actor, "agent");
+      if (!ok) return { error: "no se pudo guardar (¿incidente cerrado o inexistente?)" };
+      return { types, guidance: Object.fromEntries(types.map((t) => [t, (TYPE_GUIDANCE as Record<string, string[]>)[t]])) };
     }
     if (name === "incident_contain_plan") {
       const ips = Array.isArray(input.ips) ? input.ips.map(String) : [];

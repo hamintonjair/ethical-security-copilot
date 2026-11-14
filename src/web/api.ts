@@ -10,8 +10,8 @@ import { buildReport } from "../report.js";
 import { broadScopeProblem } from "../scope.js";
 import type { State } from "../state.js";
 import { OAuth, OAuthError } from "../oauth.js";
-import { IncidentCreateIn, IncidentEvidenceIn, IncidentContainIn, AiConfigIn, AiAssistIn } from "../schemas.js";
-import { analyzeLog, analyzeEmailHeaders, containmentRules, buildIncidentReport, MAX_EVIDENCE_CHARS } from "../incident.js";
+import { IncidentCreateIn, IncidentEvidenceIn, IncidentContainIn, IncidentTypesIn, AiConfigIn, AiAssistIn } from "../schemas.js";
+import { analyzeLog, analyzeEmailHeaders, containmentRules, buildIncidentReport, suggestIncidentTypes, TYPE_GUIDANCE, MAX_EVIDENCE_CHARS } from "../incident.js";
 import { runIncidentAssistant, runAssessmentAssistant, testAnthropicKey } from "../ai.js";
 import { redact } from "../redact.js";
 import { Auth, WEB_ROLES, type Session, type WebRole } from "./auth.js";
@@ -265,13 +265,23 @@ export function createApi(ctx: ApiCtx) {
     return { id: inc.id };
   });
   const mustFindIncident = async (id: string) => { const r = await store.getIncident(id); if (!r) throw new HttpError(404, "NOT_FOUND", "El incidente no existe."); return r; };
-  route("GET", "/api/incidents/:id", CAN.read, async ({ params }) => { const r = await mustFindIncident(params[0]); return { ...r.incident, evidence: r.evidence }; });
+  route("GET", "/api/incidents/:id", CAN.read, async ({ params }) => {
+    const r = await mustFindIncident(params[0]);
+    const guidance = Object.fromEntries((r.incident.types ?? []).map((t: string) => [t, TYPE_GUIDANCE[t as keyof typeof TYPE_GUIDANCE]]));
+    return { ...r.incident, evidence: r.evidence, guidance };
+  });
   route("POST", "/api/incidents/:id/status", CAN.openIncident, async ({ s, params, body }) => {
     const status = String(body.status ?? "");
     if (!["open", "contained", "closed"].includes(status)) throw new HttpError(400, "VALIDATION", "Estado no válido.");
     const ok = await store.setIncidentStatus(params[0], status as any, s.user.username, s.user.role as any);
     if (!ok) throw new HttpError(400, "INVALID_TRANSITION", "No se pudo cambiar el estado (¿ya está cerrado?).");
     return { ok: true };
+  });
+  route("POST", "/api/incidents/:id/types", CAN.incidentWork, async ({ s, params, body }) => {
+    const { types } = IncidentTypesIn.parse(body);
+    const ok = await store.setIncidentTypes(params[0], types, s.user.username, s.user.role as any);
+    if (!ok) throw new HttpError(400, "INVALID", "No se pudo guardar (¿el incidente no existe o ya está cerrado?).");
+    return { types, guidance: Object.fromEntries(types.map((t) => [t, TYPE_GUIDANCE[t as keyof typeof TYPE_GUIDANCE]])) };
   });
   route("POST", "/api/incidents/:id/evidence", CAN.incidentWork, async ({ s, params, body }) => {
     const input = IncidentEvidenceIn.parse({ incidentId: params[0], ...body });
@@ -281,7 +291,9 @@ export function createApi(ctx: ApiCtx) {
     const saved = await store.addIncidentEvidence(params[0], { kind: input.kind, description: input.description, redactedContent: redacted, iocs: r.iocs }, s.user.username);
     if (saved === null) throw new HttpError(404, "NOT_FOUND", "El incidente no existe.");
     if (saved === "CLOSED") throw new HttpError(400, "INCIDENT_CLOSED", "Este incidente ya está cerrado.");
-    return { evidenceId: saved.id, facts: r.facts, patterns: r.patterns, iocs: r.iocs };
+    const suggestedTypes = suggestIncidentTypes(input.kind, r.patterns);
+    return { evidenceId: saved.id, facts: r.facts, patterns: r.patterns, iocs: r.iocs,
+      suggestedTypes: suggestedTypes.map((s2) => ({ ...s2, guidance: TYPE_GUIDANCE[s2.type] })) };
   });
   route("POST", "/api/incidents/:id/contain", CAN.incidentWork, async ({ s, params, body }) => {
     const input = IncidentContainIn.parse({ incidentId: params[0], ...body });

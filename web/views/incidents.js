@@ -1,9 +1,36 @@
-import { h, api, panel, empty, seal, fmtDate, toast, copyText, download, formDialog, confirmDialog, errorBox, ROLE } from "../lib.js";
+import { h, api, panel, empty, seal, fmtDate, toast, copyText, download, formDialog, confirmDialog, openDialog, errorBox, ROLE } from "../lib.js";
 
 const STATUS = { open: "Abierto", contained: "Contenido", closed: "Cerrado" };
 const STATUS_TONE = { open: "warn", contained: "ok", closed: "mute" };
 const KIND = { log: "Log del servidor", email_headers: "Cabeceras de correo", other: "Otro" };
 const SEV_TONE = { info: "mute", low: "", medium: "warn", high: "bad" };
+const INCIDENT_TYPES = [
+  ["phishing_email", "Phishing / correo malicioso"],
+  ["network_intrusion", "Intrusión en la red"],
+  ["malware_ransomware", "Malware / ransomware"],
+  ["ddos", "Denegación de servicio (DDoS)"],
+  ["data_breach", "Fuga / robo de datos"],
+  ["unauthorized_access", "Acceso no autorizado"],
+  ["web_attack", "Ataque web (SQLi, XSS, defacement…)"],
+  ["other", "Otro"],
+];
+const TYPE_LABEL = Object.fromEntries(INCIDENT_TYPES);
+
+/** Diálogo de checkboxes para marcar tipos de incidente. El humano decide; nada se marca solo. */
+const pickTypes = (title, intro, selected = []) => openDialog((close) => {
+  const boxes = INCIDENT_TYPES.map(([val, label]) => {
+    const cb = h("input", { type: "checkbox", value: val, checked: selected.includes(val) });
+    return { val, cb, node: h("label", {}, cb, ` ${label}`) };
+  });
+  const form = h("form", { method: "dialog", onsubmit: (e) => { e.preventDefault(); close(boxes.filter((b) => b.cb.checked).map((b) => b.val)); } },
+    h("h2", {}, title),
+    h("p", { class: "muted" }, intro),
+    h("div", { class: "checks" }, boxes.map((b) => b.node)),
+    h("div", { class: "actions" },
+      h("button", { type: "button", class: "btn", onclick: () => close(null) }, "Cancelar"),
+      h("button", { type: "submit", class: "btn primary" }, "Guardar")));
+  return form;
+});
 
 export async function incidentsView(ctx) {
   const list = await api("GET", "/api/incidents");
@@ -20,7 +47,8 @@ export async function incidentsView(ctx) {
       ],
     });
     if (!v) return;
-    const body = { ...v, affectedAssets: (v.affectedAssets ?? "").split(",").map((s) => s.trim()).filter(Boolean) };
+    const types = await pickTypes("Tipo de incidente", "Marca el tipo o tipos que correspondan (opcional, se puede editar después). Esto no activa nada: solo ayuda a mostrar las opciones de bloqueo adecuadas para tu caso.");
+    const body = { ...v, affectedAssets: (v.affectedAssets ?? "").split(",").map((s) => s.trim()).filter(Boolean), types: types ?? [] };
     try { const r = await api("POST", "/api/incidents", body); toast("Caso abierto."); ctx.go(`#/incidentes/${r.id}`); } catch (e) { toast(e.message, true); }
   };
   const rows = list.map((i) => h("tr", {}, h("td", {}, h("a", { href: `#/incidentes/${i.id}` }, i.organization)), h("td", {}, i.summary.slice(0, 80)),
@@ -43,13 +71,40 @@ export async function incidentView(ctx, id) {
     try { await api("POST", `/api/incidents/${id}/status`, { status }); toast("Estado actualizado."); reload(); } catch (e) { toast(e.message, true); }
   };
 
+  const editTypes = async () => {
+    const types = await pickTypes("Editar tipos de incidente", "Marca los tipos que correspondan. Nada se aplica solo: tú decides.", d.types ?? []);
+    if (types === null) return;
+    try { await api("POST", `/api/incidents/${id}/types`, { types }); toast("Tipos actualizados."); reload(); } catch (e) { toast(e.message, true); }
+  };
+
+  const suggestBox = h("div", {});
+  const acceptSuggested = async (types) => {
+    const merged = [...new Set([...(d.types ?? []), ...types])];
+    try { await api("POST", `/api/incidents/${id}/types`, { types: merged }); toast("Tipos marcados."); reload(); } catch (e) { toast(e.message, true); }
+  };
+
   const evBox = h("div", {});
   const addEvidence = () => {
     let n = 0; const f = (label, ctl, hint) => { const id2 = `ie${++n}`; ctl.id = id2; return h("div", { class: "field" }, h("label", { for: id2 }, label), ctl, hint ? h("span", { class: "hint" }, hint) : null); };
     const err = h("p", { class: "err", hidden: true, role: "alert" });
     const form = h("form", { onsubmit: async (e) => {
       e.preventDefault(); err.hidden = true; const g = (k) => form.elements[k].value;
-      try { const r = await api("POST", `/api/incidents/${id}/evidence`, { kind: g("kind"), description: g("description"), content: g("content") }); toast(`Analizado: ${r.patterns.length} patrón(es), ${Object.values(r.iocs).flat().length} IOC(s).`); form.remove(); reload(); }
+      try {
+        const r = await api("POST", `/api/incidents/${id}/evidence`, { kind: g("kind"), description: g("description"), content: g("content") });
+        toast(`Analizado: ${r.patterns.length} patrón(es), ${Object.values(r.iocs).flat().length} IOC(s).`);
+        form.remove();
+        if (r.suggestedTypes?.length) {
+          suggestBox.replaceChildren(panel("Detección automática: tipos sugeridos", h("div", { class: "body stack" },
+            h("p", { class: "muted" }, "Según los patrones de la evidencia, el sistema sugiere estos tipos. No se marca nada solo: confírmalo tú."),
+            ...r.suggestedTypes.map((s) => h("div", { class: "stack" },
+              h("strong", {}, TYPE_LABEL[s.type] ?? s.type), h("p", { class: "muted" }, s.reason),
+              h("details", {}, h("summary", {}, "Opciones de bloqueo para este tipo"), h("ul", {}, (s.guidance ?? []).map((g2) => h("li", {}, g2)))))),
+            h("div", { class: "row" },
+              h("button", { class: "btn primary", onclick: () => acceptSuggested(r.suggestedTypes.map((s) => s.type)) }, "Marcar estos tipos"),
+              h("button", { class: "btn", onclick: reload }, "Omitir")))));
+          suggestBox.scrollIntoView({ block: "start" });
+        } else reload();
+      }
       catch (ex) { err.textContent = ex.issues?.length ? ex.issues.map((i) => i.message).join(" ") : ex.message; err.hidden = false; }
     } },
       f("Tipo", h("select", { name: "kind" }, h("option", { value: "log" }, "Log del servidor"), h("option", { value: "email_headers" }, "Cabeceras de correo"), h("option", { value: "other" }, "Otro texto"))),
@@ -109,10 +164,18 @@ export async function incidentView(ctx, id) {
   return { crumb: `Incidentes › ${d.organization}`, title: d.organization, node: h("div", { class: "stack" },
     h("div", { class: "page-head" }, h("div", {}, h("h1", {}, d.organization), h("p", { class: "row" }, seal(STATUS[d.status] ?? d.status, STATUS_TONE[d.status]), h("span", { class: "muted" }, `Abierto ${fmtDate(d.createdAt)} por ${d.createdBy}`)))),
     panel("Resumen", h("div", { class: "body" }, h("dl", { class: "facts" }, h("dt", {}, "Contacto"), h("dd", {}, `${d.contactName} · ${d.contactEmail}`),
-      h("dt", {}, "Activos afectados"), h("dd", {}, d.affectedAssets.join(", ") || "sin especificar"), h("dt", {}, "Qué está pasando"), h("dd", {}, d.summary)),
-      !closed ? h("div", { class: "row" }, d.status === "open" ? h("button", { class: "btn", onclick: () => setStatus("contained") }, "Marcar como contenido") : null, h("button", { class: "btn danger", onclick: () => setStatus("closed") }, "Cerrar incidente")) : null)),
+      h("dt", {}, "Activos afectados"), h("dd", {}, d.affectedAssets.join(", ") || "sin especificar"), h("dt", {}, "Qué está pasando"), h("dd", {}, d.summary),
+      h("dt", {}, "Tipo(s) de incidente"), h("dd", {}, (d.types ?? []).length ? h("div", { class: "row" }, (d.types ?? []).map((t) => seal(TYPE_LABEL[t] ?? t, "mute"))) : h("span", { class: "muted" }, "sin marcar (check-out pendiente)"))),
+      !closed ? h("div", { class: "row" },
+        h("button", { class: "btn small", onclick: editTypes }, "Marcar / editar tipos"),
+        d.status === "open" ? h("button", { class: "btn", onclick: () => setStatus("contained") }, "Marcar como contenido") : null,
+        h("button", { class: "btn danger", onclick: () => setStatus("closed") }, "Cerrar incidente")) : null)),
+    (d.types ?? []).length ? panel("Opciones de bloqueo según el tipo marcado", h("div", { class: "body stack" },
+      h("p", { class: "muted" }, "Guía de contención por tipo de incidente. Como siempre: tú la ejecutas en tu propia infraestructura, nada se aplica desde aquí."),
+      ...(d.types ?? []).map((t) => h("details", { open: (d.types ?? []).length === 1 }, h("summary", {}, TYPE_LABEL[t] ?? t), h("ul", {}, (d.guidance?.[t] ?? []).map((g) => h("li", {}, g))))))) : null,
     panel(`Evidencia (${d.evidence.length})`, h("div", {}, evList), !closed ? h("button", { class: "btn small primary", onclick: addEvidence }, "Añadir evidencia") : null),
     evBox,
+    suggestBox,
     !closed ? aiPanel() : null,
     panel("Plan de contención", h("div", { class: "body stack" }, h("p", { class: "muted" }, `IOCs acumulados: ${allIps.length} IP(s), ${allDomains.length} dominio(s).`),
       h("button", { class: "btn primary", disabled: !allIps.length && !allDomains.length, onclick: buildContain }, "Generar reglas de bloqueo"), containBox)),

@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
   AssessmentCreateIn, ScopeValidateIn, ScanInitiateIn, ScanStopIn, FindingInput, ReportGenerateIn, RolePermissions, Role,
-  IncidentCreateIn, IncidentEvidenceIn, IncidentContainIn, IncidentReportIn,
+  IncidentCreateIn, IncidentEvidenceIn, IncidentContainIn, IncidentReportIn, IncidentTypesIn,
 } from "./schemas.js";
 import { Store } from "./store.js";
 import { PolicyEngine } from "./policy.js";
@@ -14,7 +14,7 @@ import { redact } from "./redact.js";
 import type { State } from "./state.js";
 import { createFinding } from "./findings.js";
 import { buildReport } from "./report.js";
-import { analyzeLog, analyzeEmailHeaders, containmentRules, buildIncidentReport, MAX_EVIDENCE_CHARS } from "./incident.js";
+import { analyzeLog, analyzeEmailHeaders, containmentRules, buildIncidentReport, suggestIncidentTypes, TYPE_GUIDANCE, MAX_EVIDENCE_CHARS } from "./incident.js";
 
 type RoleT = z.infer<typeof Role>;
 const json = (o: unknown, isError = false) => ({ content: [{ type: "text" as const, text: JSON.stringify(o, null, 2) }], ...(isError ? { isError: true } : {}) });
@@ -178,7 +178,20 @@ export function createServer(deps: ServerDeps) {
     const saved = await store.addIncidentEvidence(incidentId, { kind, description, redactedContent: redacted, iocs: r.iocs }, actor);
     if (saved === null) return json({ error: "INCIDENT_NOT_FOUND" }, true);
     if (saved === "CLOSED") return json({ error: "INCIDENT_CLOSED", message: "Este incidente ya está cerrado." }, true);
-    return json({ facts: r.facts, patterns: r.patterns, iocs: r.iocs, evidenceId: saved.id });
+    const suggestedTypes = suggestIncidentTypes(kind, r.patterns).map((s) => ({ ...s, guidance: TYPE_GUIDANCE[s.type] }));
+    return json({ facts: r.facts, patterns: r.patterns, iocs: r.iocs, evidenceId: saved.id, suggestedTypes,
+      note: suggestedTypes.length ? "Son solo sugerencias; pídele al humano que confirme antes de marcarlas con incident_types_set." : undefined });
+  });
+
+  /* 8b. incident_types_set — el humano decide los tipos; la IA solo puede ejecutarlo tras pedírselo explícitamente */
+  server.registerTool("incident_types_set", {
+    description: "Marca (o reemplaza) los tipos de incidente del caso, tal como el humano los confirme. No se debe llamar sin que el humano haya aprobado explícitamente cada tipo.",
+    inputSchema: IncidentTypesIn.extend({ incidentId: z.string().uuid() }).shape,
+  }, async ({ incidentId, types }) => {
+    const d = await allowed("incident_types_set", incidentId); if (d) return d;
+    const ok = await store.setIncidentTypes(incidentId, types, actor, role);
+    if (!ok) return json({ error: "NOT_FOUND_OR_CLOSED" }, true);
+    return json({ types, guidance: Object.fromEntries(types.map((t) => [t, TYPE_GUIDANCE[t as keyof typeof TYPE_GUIDANCE]])) });
   });
 
   /* 9. incident_contain_plan — genera reglas; SIEMPRE para que el propio equipo las aplique en su infraestructura */

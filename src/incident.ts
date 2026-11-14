@@ -6,6 +6,87 @@ import { redact } from "./redact.js";
 export interface Iocs { ips: string[]; domains: string[]; urls: string[]; hashes: string[]; emails: string[] }
 export interface Pattern { title: string; severity: "info" | "low" | "medium" | "high"; detail: string }
 
+/* ---------- Tipos de incidente ----------
+   El humano los marca al abrir o editar el caso (check-out). La detección automática solo SUGIERE
+   a partir de la evidencia analizada; nunca los marca por sí sola — el humano decide si aceptarlos. */
+export const IncidentTypeValues = ["phishing_email", "network_intrusion", "malware_ransomware", "ddos", "data_breach", "unauthorized_access", "web_attack", "other"] as const;
+export type IncidentTypeT = typeof IncidentTypeValues[number];
+
+export const INCIDENT_TYPE_LABELS: Record<IncidentTypeT, string> = {
+  phishing_email: "Phishing de correo",
+  network_intrusion: "Intrusión de red",
+  malware_ransomware: "Malware / ransomware",
+  ddos: "Denegación de servicio (DDoS)",
+  data_breach: "Fuga / robo de datos",
+  unauthorized_access: "Acceso no autorizado",
+  web_attack: "Ataque web (inyección, fuerza bruta, escaneo)",
+  other: "Otro",
+};
+
+/** Opciones de bloqueo/contención específicas de cada tipo — siempre texto para que el humano decida y aplique. */
+export const TYPE_GUIDANCE: Record<IncidentTypeT, string[]> = {
+  phishing_email: [
+    "Bloquear el remitente y el dominio del enlace en tu filtro de correo.",
+    "Si el remitente usa tu propio dominio falsificado, endurecer SPF/DKIM/DMARC de inmediato.",
+    "Avisar a los usuarios afectados que no hagan clic ni respondan.",
+    "Si alguien ya hizo clic o entregó credenciales, rotarlas ya mismo.",
+  ],
+  network_intrusion: [
+    "Bloquear las IPs/rangos de origen en tu firewall perimetral.",
+    "Revisar logs de acceso por esas IPs en todos los sistemas expuestos.",
+    "Rotar credenciales que pudieron verse comprometidas.",
+    "Aumentar temporalmente el nivel de registro (logging) mientras se investiga.",
+  ],
+  malware_ransomware: [
+    "Aislar el equipo afectado de la red (desconectar cable/Wi-Fi) SIN apagarlo, para preservar evidencia en memoria.",
+    "Bloquear en tu DNS/proxy/firewall los dominios e IPs de comando y control (C2) identificados.",
+    "Restringir el acceso a los backups para que el malware no los alcance.",
+    "No pagar ni negociar directamente con el atacante; coordina con las autoridades.",
+  ],
+  ddos: [
+    "Activar o escalar la mitigación de DDoS de tu proveedor (Cloudflare u otro).",
+    "Bloquear los rangos de IP con más tráfico anómalo.",
+    "Aumentar los límites de conexión (rate limiting) en tu balanceador/WAF.",
+    "Avisar a tu proveedor de hosting/tránsito.",
+  ],
+  data_breach: [
+    "Rotar de inmediato todas las credenciales y llaves que pudieron verse expuestas.",
+    "Precisar exactamente qué datos y de quiénes se vieron afectados.",
+    "Preparar la notificación a los titulares de los datos según la normativa aplicable (en Colombia, Ley 1581 de 2012).",
+    "Preservar evidencia de cómo ocurrió el acceso antes de corregir nada.",
+  ],
+  unauthorized_access: [
+    "Bloquear o suspender la cuenta/IP usada para el acceso.",
+    "Forzar el cierre de sesión y el cambio de contraseña en la cuenta afectada.",
+    "Revisar qué acciones se realizaron con esa cuenta mientras estuvo comprometida.",
+    "Activar autenticación multifactor (MFA) si no estaba activa.",
+  ],
+  web_attack: [
+    "Bloquear las IPs atacantes en tu WAF, firewall o nginx.",
+    "Parchear cuanto antes la vulnerabilidad explotada (inyección, archivo expuesto, etc.).",
+    "Revisar los logs del servidor web por el mismo patrón en otros endpoints.",
+    "Rotar credenciales si el ataque llegó a tocar datos de sesión o de base de datos.",
+  ],
+  other: ["Describe con el mayor detalle posible lo que observaste; entre más evidencia aportes, mejor orientación puede darte el análisis."],
+};
+
+export interface TypeSuggestion { type: IncidentTypeT; reason: string }
+
+/** Sugiere tipos de incidente a partir de lo ya detectado en la evidencia. Nunca decide por el humano: solo propone. */
+export function suggestIncidentTypes(kind: "log" | "email_headers" | "other", patterns: Pattern[]): TypeSuggestion[] {
+  const out: TypeSuggestion[] = [];
+  const has = (re: RegExp) => patterns.some(p => re.test(p.title));
+  if (kind === "email_headers") {
+    if (has(/no coincide|apunta a un dominio distinto|falló/i)) out.push({ type: "phishing_email", reason: "La cabecera muestra suplantación del remitente o falla de autenticación (SPF/DKIM/DMARC)." });
+    else out.push({ type: "phishing_email", reason: "La evidencia aportada es un correo electrónico." });
+  }
+  if (has(/inyección sql|xss|path traversal|inyección de comandos|rastreo de rutas|herramienta de escaneo/i))
+    out.push({ type: "web_attack", reason: "Se detectaron patrones de ataque web (inyección, rastreo de rutas o escaneo) en el texto analizado." });
+  if (has(/fuerza bruta|fallos de autenticación/i))
+    out.push({ type: "unauthorized_access", reason: "Se detectaron múltiples fallos de autenticación, típico de intentos de acceso no autorizado." });
+  return out;
+}
+
 const IPV4 = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
 const DOMAIN = /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}\b/gi;
 const URL_RE = /\bhttps?:\/\/[^\s"'<>]+/gi;

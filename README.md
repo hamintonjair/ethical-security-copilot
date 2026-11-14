@@ -77,7 +77,13 @@ El manual de uso (conceptos, flujo, catálogo de módulos, mapa de cobertura fre
 
 Sesión aparte de las evaluaciones, para cuando la organización está siendo atacada ahora mismo. Analiza evidencia que tú aportas (logs, cabeceras de correo) para extraer IOCs y patrones de ataque, genera reglas de contención (iptables, ufw, nginx, Cloudflare) y el informe del caso con guía de a quién reportarlo. No toca ninguna red: las reglas se generan para que el propio equipo las aplique en su infraestructura.
 
-Herramientas MCP: `incident_open` (solo autorizador/operador), `incident_evidence_analyze`, `incident_contain_plan`, `incident_report`.
+Herramientas MCP: `incident_open` (solo autorizador/operador), `incident_types_set`, `incident_evidence_analyze`, `incident_contain_plan`, `incident_report`.
+
+**Tipo de incidente (check-out humano + detección automática).** Cada caso puede marcarse con uno o varios tipos (phishing, intrusión en la red, malware/ransomware, DDoS, fuga de datos, acceso no autorizado, ataque web, otro). Dos caminos, ambos sin saltarse al humano:
+- **Manual**: al abrir el caso, o después con "Marcar / editar tipos", el humano marca los checkboxes que correspondan (`incident_types_set`).
+- **Automático (solo sugerencia)**: al analizar cada evidencia, `incident_evidence_analyze` también devuelve `suggestedTypes` — tipos que el sistema detecta por los patrones ya reconocidos (SPF/DKIM/DMARC fallidos, fuerza bruta, inyección, exfiltración, etc.), cada uno con su razón. La sugerencia nunca se guarda sola: la consola la muestra junto con las opciones de bloqueo de ese tipo y dos botones, "Marcar estos tipos" u "Omitir" — el humano decide.
+
+Una vez marcado un tipo (manual o aceptando la sugerencia), el caso muestra su guía de contención curada ("Opciones de bloqueo") para ese tipo, pensada para que el equipo la ejecute en su propia infraestructura — nunca se aplica desde la plataforma.
 
 ## Módulo de IA por API (además de MCP)
 

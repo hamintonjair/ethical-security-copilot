@@ -59,16 +59,20 @@ Si cambias el alcance, usa **Nueva versión del alcance**: vuelve a borrador, se
 
 Para cuando a la organización la están atacando **ahora mismo**. Es una sesión aparte de las evaluaciones, pensada para la urgencia. Mantiene el mismo límite ético: **nunca toca la red de nadie**, ni la del atacante ni la tuya. Solo analiza lo que tú le pegas (logs, cabeceras de correo) y genera reglas e informes para que **tu propio equipo** los aplique en **su propia infraestructura**. Cerrar el paso, no contraatacar: entrar a los sistemas del atacante es ilegal (en Colombia, Ley 1273 de 2009) aunque haya empezado él.
 
-1. **Abrir el caso** (autorizador u operador): organización, quién reporta, qué está pasando, activos afectados.
+1. **Abrir el caso** (autorizador u operador): organización, quién reporta, qué está pasando, activos afectados y, opcionalmente, el **tipo de incidente** (ver más abajo).
 2. **Añadir evidencia**: pega líneas de log o las cabeceras completas de un correo sospechoso. Se analiza al instante:
    - **Logs**: extrae IPs, dominios, URLs y hashes; detecta patrones de inyección SQL, XSS, path traversal, inyección de comandos, rastreo de rutas sensibles, firmas de herramientas de escaneo (sqlmap, nikto, nmap…) y fuerza bruta/credential stuffing (5+ fallos de autenticación desde la misma IP).
    - **Cabeceras de correo**: compara el remitente visible (`From`) con el real (`Return-Path`) y `Reply-To`, y lee `Authentication-Results` para ver si SPF/DKIM/DMARC fallaron. Es la forma más rápida de confirmar un phishing en curso.
    - El contenido se guarda redactado (sin credenciales ni tokens) y nunca se muestra más allá de lo necesario.
-3. **Plan de contención**: con las IPs/dominios acumulados de toda la evidencia, genera reglas listas para pegar: `iptables`, `ufw`, un bloque `nginx deny`, una regla de Cloudflare (Firewall Rules / WAF) y una lista de dominios sospechosos. **Nada se ejecuta**: las aplicas tú mismo en tu firewall, tu servidor o tu panel.
-4. **Informe**: línea de tiempo de la evidencia, todos los IOCs acumulados, y a quién reportar: el *abuse contact* del hosting del atacante (`whois <ip>`), el CSIRT nacional (**colCERT** en Colombia, más la Policía Nacional - Centro Cibernético, para denuncia formal), o el CERT de tu país si no es Colombia. Incluye cómo preservar evidencia para una denuncia.
-5. **Estados**: *Abierto → Contenido → Cerrado*. Un incidente cerrado no admite más evidencia ni se puede reabrir.
+3. **Tipo de incidente: check-out humano + detección automática.** El caso se puede etiquetar con uno o varios tipos (phishing, intrusión en la red, malware/ransomware, DDoS, fuga de datos, acceso no autorizado, ataque web, otro):
+   - **Manual (check-out)**: tú marcas los checkboxes del tipo que corresponda, al abrir el caso o después con "Marcar / editar tipos" en el resumen. Es la vía normal y la única que decide algo por sí misma.
+   - **Automático**: cada vez que analizas evidencia, el sistema detecta por sí solo qué tipo(s) encajan según los patrones hallados (p. ej. SPF/DKIM/DMARC fallidos → phishing; fuerza bruta/inyección → ataque web; muchas IPs simultáneas → DDoS) y te los **sugiere** con su razón, junto con las opciones de bloqueo de ese tipo. **Nunca se marca solo**: aparecen dos botones, "Marcar estos tipos" (lo confirmas tú) u "Omitir" — el humano siempre tiene la última palabra.
+   - En cuanto un tipo queda marcado (a mano o aceptando la sugerencia), el caso muestra su propia guía curada de **opciones de bloqueo** para ese tipo exacto — contención pensada para que tu equipo la ejecute en su infraestructura, nunca aplicada desde aquí.
+4. **Plan de contención**: con las IPs/dominios acumulados de toda la evidencia, genera reglas listas para pegar: `iptables`, `ufw`, un bloque `nginx deny`, una regla de Cloudflare (Firewall Rules / WAF) y una lista de dominios sospechosos. **Nada se ejecuta**: las aplicas tú mismo en tu firewall, tu servidor o tu panel.
+5. **Informe**: línea de tiempo de la evidencia, todos los IOCs acumulados, y a quién reportar: el *abuse contact* del hosting del atacante (`whois <ip>`), el CSIRT nacional (**colCERT** en Colombia, más la Policía Nacional - Centro Cibernético, para denuncia formal), o el CERT de tu país si no es Colombia. Incluye cómo preservar evidencia para una denuncia.
+6. **Estados**: *Abierto → Contenido → Cerrado*. Un incidente cerrado no admite más evidencia, ni se le pueden cambiar los tipos, ni se puede reabrir.
 
-Pídeselo a Claude, por ejemplo: «Analiza este log del incidente `<id>` y dime qué encuentra» o «Genera el plan de contención con las IPs que ya encontramos».
+Pídeselo a Claude, por ejemplo: «Analiza este log del incidente `<id>` y dime qué encuentra», «Genera el plan de contención con las IPs que ya encontramos» o «¿Qué tipo de incidente sugiere esta evidencia y qué opciones de bloqueo tiene?».
 
 ## 7. Catálogo de módulos
 
@@ -126,7 +130,7 @@ Hasta ahora, la única forma de que un modelo de IA razone sobre tus casos era c
 
 - **Dónde se configura**: *Configuración → Integración IA* (solo un autorizador). Se guarda cifrada (AES-256-GCM) con una llave derivada de `ESC_SIGNING_KEY`; nunca se devuelve ni se muestra completa, solo sus últimos 4 caracteres. El botón *Probar conexión* comprueba que la llave funciona sin exponerla.
 - **Dónde se usa**:
-  - **Incidentes** → panel *Asistente de IA* en cada caso. Le escribes lo que necesitas («revisa la evidencia y dime qué hacer», «genera el plan de contención») y responde en lenguaje natural; puede analizar evidencia, generar reglas de contención y generar el informe (las tres herramientas que ya tenía el agente por MCP).
+  - **Incidentes** → panel *Asistente de IA* en cada caso. Le escribes lo que necesitas («revisa la evidencia y dime qué hacer», «genera el plan de contención») y responde en lenguaje natural; puede analizar evidencia, generar reglas de contención, generar el informe y marcar el tipo de incidente (las mismas herramientas que ya tenía el agente por MCP, incluida `incident_types_set`) — pero nunca marca un tipo sin que tú se lo confirmes explícitamente en la conversación.
   - **Evaluaciones** → pestaña *Hallazgos*, mismo panel. Le pides que revise los hallazgos, registre uno nuevo o redacte un borrador del informe. **No incluye lanzar módulos**: ejecutar algo contra una red real sigue necesitando siempre un plan aprobado por un humano, por MCP o por la consola.
 - **Mismos límites que el rol `agent` de siempre**: en cada sesión, el asistente solo puede usar las herramientas que `RolePermissions.agent` ya tenía permitidas por MCP. **Nunca** puede abrir/cerrar un incidente ni aprobar un plan: eso lo decide siempre un humano.
 - **Nada se ejecuta solo**: las reglas de contención, los hallazgos e informes son para que tú los revises; el asistente no se conecta a ninguna red.

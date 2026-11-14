@@ -4,7 +4,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { Store } from "../src/store.js";
 import { createServer } from "../src/server.js";
-import { extractIocs, analyzeEmailHeaders, containmentRules } from "../src/incident.js";
+import { extractIocs, analyzeEmailHeaders, containmentRules, suggestIncidentTypes, TYPE_GUIDANCE } from "../src/incident.js";
 
 const KEY = Buffer.from("incident-key-incident-key-1234567");
 
@@ -93,4 +93,67 @@ test("analyzeEmailHeaders: detecta From distinto de Return-Path y SPF/DKIM falli
 
 test("containmentRules: sin datos no genera archivos vacíos de más", () => {
   assert.deepEqual(containmentRules([], [], "all"), {});
+});
+
+test("suggestIncidentTypes: solo sugiere, nunca decide por sí sola", () => {
+  const headers = analyzeEmailHeaders(["From: Soporte Banco <soporte@banco-real.com>", "Return-Path: <x@enviador-malo.ru>", "Authentication-Results: mx.google.com; spf=fail smtp.mailfrom=enviador-malo.ru; dkim=fail; dmarc=fail"].join("\n"));
+  const s = suggestIncidentTypes("email_headers", headers.patterns);
+  assert.ok(s.length > 0);
+  assert.equal(s[0].type, "phishing_email");
+  assert.ok(typeof s[0].reason === "string" && s[0].reason.length > 0);
+  // cada tipo sugerido tiene guía de bloqueo asociada
+  for (const sug of s) assert.ok(Array.isArray(TYPE_GUIDANCE[sug.type]) && TYPE_GUIDANCE[sug.type].length > 0);
+});
+
+test("suggestIncidentTypes: sin patrones reconocibles no sugiere nada (no inventa un tipo)", () => {
+  const s = suggestIncidentTypes("other", []);
+  assert.deepEqual(s, []);
+});
+
+test("tipos de incidente: el humano los marca (check-out) vía incident_types_set; requiere permiso de rol", async () => {
+  const store = await Store.open("memory", KEY);
+  const op = await boot("operator", store);
+  const auditor = await boot("auditor", store);
+  const { data: { incidentId } } = await op.call("incident_open", { organization: "Acme", contactName: "Ana", contactEmail: "ana@acme.test", summary: "Caso para marcar tipos", affectedAssets: [] });
+
+  // el auditor (solo lectura) no puede marcar tipos
+  const denied = await auditor.call("incident_types_set", { incidentId, types: ["phishing_email"] });
+  assert.equal(denied.isError, true);
+
+  // el operador sí puede, y la respuesta incluye las opciones de bloqueo del tipo marcado
+  const ok = await op.call("incident_types_set", { incidentId, types: ["phishing_email", "web_attack"] });
+  assert.equal(ok.isError, false);
+  assert.deepEqual(ok.data.types, ["phishing_email", "web_attack"]);
+  assert.ok(Array.isArray(ok.data.guidance.phishing_email) && ok.data.guidance.phishing_email.length > 0);
+  assert.ok(Array.isArray(ok.data.guidance.web_attack) && ok.data.guidance.web_attack.length > 0);
+
+  // reemplaza (no acumula) los tipos marcados previamente
+  const replaced = await op.call("incident_types_set", { incidentId, types: ["ddos"] });
+  assert.equal(replaced.isError, false);
+  assert.deepEqual(replaced.data.types, ["ddos"]);
+});
+
+test("tipos de incidente: no se pueden marcar sobre un caso cerrado", async () => {
+  const store = await Store.open("memory", KEY);
+  const op = await boot("operator", store);
+  const { data: { incidentId } } = await op.call("incident_open", { organization: "Acme", contactName: "Ana", contactEmail: "ana@acme.test", summary: "Caso que se cerrará", affectedAssets: [] });
+  await store.setIncidentStatus(incidentId, "contained", "ana", "operator");
+  await store.setIncidentStatus(incidentId, "closed", "ana", "operator");
+  const r = await op.call("incident_types_set", { incidentId, types: ["other"] });
+  assert.equal(r.isError, true); assert.equal(r.data.error, "NOT_FOUND_OR_CLOSED");
+});
+
+test("al analizar evidencia de phishing, la API propone tipos (incident_evidence_analyze) sin marcarlos", async () => {
+  const store = await Store.open("memory", KEY);
+  const op = await boot("operator", store);
+  const { data: { incidentId } } = await op.call("incident_open", { organization: "Acme", contactName: "Ana", contactEmail: "ana@acme.test", summary: "Correo sospechoso reportado por un empleado", affectedAssets: ["correo"] });
+  const headers = ["From: Soporte Banco <soporte@banco-real.com>", "Return-Path: <x@enviador-malo.ru>", "Authentication-Results: mx.google.com; spf=fail smtp.mailfrom=enviador-malo.ru; dkim=fail; dmarc=fail"].join("\n");
+  const r = await op.call("incident_evidence_analyze", { incidentId, kind: "email_headers", description: "Cabeceras del correo reportado", content: headers });
+  assert.equal(r.isError, false);
+  assert.ok(Array.isArray(r.data.suggestedTypes) && r.data.suggestedTypes.length > 0);
+  assert.equal(r.data.suggestedTypes[0].type, "phishing_email");
+
+  // la sugerencia no marcó nada por sí sola: el incidente sigue sin tipos hasta que el humano confirme
+  const current = await store.getIncident(incidentId);
+  assert.deepEqual(current?.incident.types ?? [], []);
 });
