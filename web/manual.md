@@ -70,7 +70,7 @@ Para cuando a la organización la están atacando **ahora mismo**. Es una sesió
 
 Pídeselo a Claude, por ejemplo: «Analiza este log del incidente `<id>` y dime qué encuentra» o «Genera el plan de contención con las IPs que ya encontramos».
 
-## 6. Catálogo de módulos
+## 7. Catálogo de módulos
 
 Todos son de solo lectura o de impacto mínimo. Ninguno explota vulnerabilidades. Las referencias son del OWASP Top 10 2025 (A0x), OWASP API Top 10 2023 (APIx) y CWE.
 
@@ -120,7 +120,18 @@ Todos son de solo lectura o de impacto mínimo. Ninguno explota vulnerabilidades
 ### Escritura de laboratorio (`lab_write_probe`)
 - **Modo**: solo laboratorio. Envía un POST inofensivo con un marcador. Cambia estado, por eso exige aprobación.
 
-## 7. Mapa de cobertura: del ataque a la defensa
+## 8. Módulo de IA dentro de la plataforma (además de MCP)
+
+Hasta ahora, la única forma de que un modelo de IA razone sobre tus casos era conectar Claude por MCP desde tu propia cuenta. Esta sección añade una **segunda forma, por API**, integrada en la propia consola: tú guardas tu llave de Anthropic una sola vez y la plataforma la usa para ayudarte, sin que tengas que abrir Claude aparte.
+
+- **Dónde se configura**: *Configuración → Integración IA* (solo un autorizador). Se guarda cifrada (AES-256-GCM) con una llave derivada de `ESC_SIGNING_KEY`; nunca se devuelve ni se muestra completa, solo sus últimos 4 caracteres. El botón *Probar conexión* comprueba que la llave funciona sin exponerla.
+- **Dónde se usa (piloto)**: dentro de un caso de Incidentes, panel *Asistente de IA*. Le escribes lo que necesitas («revisa la evidencia y dime qué hacer», «genera el plan de contención») y responde en lenguaje natural.
+- **Mismos límites que el rol `agent` de siempre**: el asistente solo puede analizar evidencia, generar reglas de contención y generar el informe — las mismas tres herramientas que ya tenía permitidas el agente por MCP (`RolePermissions.agent`). **Nunca** puede abrir ni cerrar un incidente: eso lo decide siempre un humano, abras el caso desde la consola o uses la IA para lo demás.
+- **Nada se ejecuta solo**: igual que por MCP, las reglas de contención y los informes son texto para que tú los revises y apliques; el asistente no se conecta a ninguna red.
+- **Auditoría**: cada acción que dispara el asistente queda en el mismo registro encadenado, con el actor `ia-modulo:<usuario que preguntó>`, para distinguirla de lo hecho por MCP o a mano.
+- **Costo**: las llamadas a la API de Anthropic las paga la cuenta dueña de la llave que configuraste; la plataforma no añade ningún cargo propio.
+
+## 9. Mapa de cobertura: del ataque a la defensa
 
 La herramienta **no ataca**: encuentra las condiciones que los atacantes aprovechan y te dice cómo cerrarlas.
 
@@ -139,7 +150,7 @@ La herramienta **no ataca**: encuentra las condiciones que los atacantes aprovec
 
 **Por qué hay cosas fuera de alcance**: son técnicas que dañan o que requieren explotar. La herramienta mantiene límites duros: sin denegación de servicio, sin cargas destructivas, sin extraer datos reales, sin persistencia ni movimiento lateral.
 
-## 8. Cómo pedírselo a Claude
+## 10. Cómo pedírselo a Claude
 
 Dile qué evaluación usar (su ID está en la dirección de la página). Ejemplos:
 
@@ -154,14 +165,14 @@ Dile qué evaluación usar (su ID está en la dirección de la página). Ejemplo
 
 En modo activo, Claude te dirá que hay un plan pendiente. Apruébalo en la consola y pásale el token.
 
-## 9. Triaje, severidad e informes
+## 11. Triaje, severidad e informes
 
 - **Severidad y CVSS**: cada hallazgo lleva un puntaje que debe corresponder a su banda (info 0, baja 0,1–3,9, media 4–6,9, alta 7–8,9, crítica 9–10).
 - **Confianza**: alta (confirmado con evidencia directa), media o baja.
 - **Triaje**: *Sin verificar* → *Confirmado*, *Falso positivo* o *Riesgo aceptado*. Revisa cada uno antes de informar.
 - **Informe**: por defecto incluye solo los confirmados. Está disponible en Markdown y JSON, y siempre indica el estado de la cadena de auditoría.
 
-## 10. Límites éticos y legales
+## 12. Límites éticos y legales
 
 - Prueba **solo** sistemas tuyos o con **permiso escrito** del dueño. La herramienta no puede comprobar la propiedad: esa responsabilidad es tuya.
 - Si usas hosting, CDN o nube (Cloudflare, Vercel, AWS…), revisa su política de pruebas de seguridad.
@@ -169,7 +180,7 @@ En modo activo, Claude te dirá que hay un plan pendiente. Apruébalo en la cons
 - Empieza siempre con ritmo bajo y ventanas cortas; amplía solo si hace falta.
 - Nunca pegues contraseñas, tokens o claves en el chat. Para cuentas de prueba, guarda **solo el nombre** del secreto en tu gestor de secretos.
 
-## 11. Solución de problemas
+## 13. Solución de problemas
 
 | Mensaje | Qué significa | Qué hacer |
 |---|---|---|
@@ -182,14 +193,14 @@ En modo activo, Claude te dirá que hay un plan pendiente. Apruébalo en la cons
 | Kill switch activo | Alguien detuvo todo | Un autorizador debe revisarlo y liberarlo |
 | Conector de Claude no verifica | El servidor no responde o está arrancando | Esperar un minuto (el plan gratuito de Render duerme) y reintentar |
 
-## 12. Seguridad de la propia herramienta
+## 14. Seguridad de la propia herramienta
 
 - Las contraseñas se guardan con scrypt; las sesiones duran 8 horas como máximo y se cierran tras 30 minutos sin actividad.
 - Tras 5 intentos fallidos la cuenta se bloquea temporalmente.
 - Rota las credenciales que compartas por error (por ejemplo, la contraseña de la base de datos) y actualiza la variable en el servidor.
 - Revisa la **Auditoría** con regularidad y usa *Verificar cadena*.
 
-## 13. Referencias
+## 15. Referencias
 
 - OWASP Top 10 2025: https://owasp.org/Top10/2025/
 - OWASP API Security Top 10 2023: https://owasp.org/API-Security/

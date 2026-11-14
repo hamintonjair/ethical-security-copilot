@@ -70,6 +70,30 @@ export async function incidentView(ctx, id) {
     } catch (e) { toast(e.message, true); }
   };
 
+  const aiBox = h("div", {});
+  const askAi = async (question, textarea) => {
+    aiBox.replaceChildren(h("p", { class: "muted" }, "Pensando…"));
+    try {
+      const r = await api("POST", `/api/incidents/${id}/ai-assist`, { question });
+      const actionNodes = r.actions.map((a) => {
+        if (a.result?.rules) return h("div", { class: "stack" }, h("strong", {}, "Plan de contención generado:"), ...Object.entries(a.result.rules).map(([name, content]) => h("div", { class: "stack" }, h("div", { class: "row" }, h("span", {}, name), h("button", { class: "btn small", onclick: () => copyText(content) }, "Copiar"), h("button", { class: "btn small", onclick: () => download(name, content, "text/plain") }, "Descargar")), h("pre", { class: "report" }, content))));
+        if (a.result?.text) return h("div", { class: "stack" }, h("strong", {}, "Informe generado:"), h("pre", { class: "report" }, a.result.text));
+        if (a.result?.facts) return h("div", { class: "stack" }, h("strong", {}, "Evidencia analizada:"), h("p", { class: "muted" }, `${a.result.patterns?.length ?? 0} patrón(es) detectado(s).`));
+        return null;
+      }).filter(Boolean);
+      aiBox.replaceChildren(h("div", { class: "stack" }, h("p", {}, r.answer), ...actionNodes));
+      if (textarea) textarea.value = "";
+      if (r.actions.length) reload();
+    } catch (e) { aiBox.replaceChildren(h("p", { class: "err" }, e.message)); }
+  };
+  const aiPanel = () => {
+    if (!ctx.aiEnabled) return panel("Asistente de IA", h("div", { class: "body" }, h("p", { class: "muted" }, "El módulo de IA no está activado. Un autorizador puede activarlo en Configuración → Integración IA.")));
+    const q = h("textarea", { rows: 3, placeholder: "Pídele algo, p. ej.: «revisa la evidencia y dime qué hacer» o «genera el plan de contención con los IOCs que ya tenemos»." });
+    return panel("Asistente de IA", h("div", { class: "body stack" },
+      h("p", { class: "muted" }, "Usa el modelo configurado por tu organización. Solo analiza y redacta; nunca ejecuta nada por sí solo ni abre o cierra el caso."),
+      q, h("button", { class: "btn primary", onclick: () => askAi(q.value, q) }, "Preguntar a la IA"), aiBox));
+  };
+
   const reportBox = h("div", {});
   const buildReport = async (format) => {
     try { const r = await api("GET", `/api/incidents/${id}/report?format=${format}`); reportBox.replaceChildren(h("pre", { class: "report" }, r.text), h("div", { class: "row" }, h("button", { class: "btn small", onclick: () => copyText(r.text) }, "Copiar"), h("button", { class: "btn small", onclick: () => download(`incidente-${id.slice(0, 8)}.${format === "json" ? "json" : "md"}`, r.text, format === "json" ? "application/json" : "text/markdown") }, "Descargar"))); }
@@ -89,6 +113,7 @@ export async function incidentView(ctx, id) {
       !closed ? h("div", { class: "row" }, d.status === "open" ? h("button", { class: "btn", onclick: () => setStatus("contained") }, "Marcar como contenido") : null, h("button", { class: "btn danger", onclick: () => setStatus("closed") }, "Cerrar incidente")) : null)),
     panel(`Evidencia (${d.evidence.length})`, h("div", {}, evList), !closed ? h("button", { class: "btn small primary", onclick: addEvidence }, "Añadir evidencia") : null),
     evBox,
+    !closed ? aiPanel() : null,
     panel("Plan de contención", h("div", { class: "body stack" }, h("p", { class: "muted" }, `IOCs acumulados: ${allIps.length} IP(s), ${allDomains.length} dominio(s).`),
       h("button", { class: "btn primary", disabled: !allIps.length && !allDomains.length, onclick: buildContain }, "Generar reglas de bloqueo"), containBox)),
     panel("Informe", h("div", { class: "body stack" }, h("div", { class: "row" }, h("button", { class: "btn primary", onclick: () => buildReport("markdown") }, "Ver informe (Markdown)"), h("button", { class: "btn", onclick: () => buildReport("json") }, "Ver informe (JSON)")), reportBox))) };

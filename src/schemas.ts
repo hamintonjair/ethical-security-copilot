@@ -169,6 +169,15 @@ export const IncidentReportIn = z.object({
 });
 export const IncidentStatus = z.enum(["open", "contained", "closed"]);
 
+/* ---------- Módulo de IA (API propia, dentro de la plataforma) ----------
+   Actúa con los mismos permisos que RolePermissions.agent: nunca abre ni cierra un incidente. */
+export const AiConfigIn = z.object({
+  enabled: z.boolean(),
+  model: z.string().min(1).max(100),
+  apiKey: z.string().min(10).max(300).optional(), // omitido => conserva la llave ya guardada
+});
+export const AiAssistIn = z.object({ question: z.string().min(1).max(4000) });
+
 /* ---------- Auditoría (hash chain) ---------- */
 export const AuditEntry = z.object({
   seq: z.number().int(),

@@ -8,13 +8,14 @@ import { manualView } from "./views/manual.js";
 import { incidentsView, incidentView } from "./views/incidents.js";
 import { authorizeView } from "./views/authorize.js";
 import { accountView } from "./views/account.js";
+import { aiConfigView } from "./views/ai_config.js";
 
 const root = document.getElementById("root");
 const ctx = { me: null, kill: null };
-const PERM = { kill: ["authorizer", "operator"], release: ["authorizer"], audit: ["authorizer", "operator", "auditor"], users: ["authorizer"], createAssessment: ["authorizer"], advance: ["authorizer"], decidePlan: ["authorizer", "operator"], findings: ["authorizer", "operator", "analyst"], finalize: ["authorizer", "operator", "analyst"], openIncident: ["authorizer", "operator"], incidentWork: ["authorizer", "operator", "analyst"] };
+const PERM = { kill: ["authorizer", "operator"], release: ["authorizer"], audit: ["authorizer", "operator", "auditor"], users: ["authorizer"], createAssessment: ["authorizer"], advance: ["authorizer"], decidePlan: ["authorizer", "operator"], findings: ["authorizer", "operator", "analyst"], finalize: ["authorizer", "operator", "analyst"], openIncident: ["authorizer", "operator"], incidentWork: ["authorizer", "operator", "analyst"], aiConfig: ["authorizer"] };
 ctx.can = (a) => !!ctx.me && PERM[a].includes(ctx.me.user.role);
 ctx.go = (hash) => { if (location.hash === hash) renderRoute(); else location.hash = hash; };
-ctx.refreshKill = async () => { const r = await api("GET", "/api/me"); ctx.kill = r.killSwitch; paintKill(); };
+ctx.refreshKill = async () => { const r = await api("GET", "/api/me"); ctx.kill = r.killSwitch; ctx.aiEnabled = r.aiEnabled; paintKill(); };
 
 /* ---------- Inicio de sesión ---------- */
 function loginScreen(notice) {
@@ -27,7 +28,7 @@ function loginScreen(notice) {
     e.preventDefault(); btn.disabled = true; err.hidden = true;
     try {
       const r = await api("POST", "/api/login", { username: user.value, password: pass.value });
-      setCsrf(r.csrf); ctx.me = r; ctx.kill = r.killSwitch; shell();
+      setCsrf(r.csrf); ctx.me = r; ctx.kill = r.killSwitch; ctx.aiEnabled = r.aiEnabled; shell();
     } catch (ex) { err.textContent = ex.message; err.hidden = false; pass.value = ""; pass.focus(); }
     finally { btn.disabled = false; }
   } },
@@ -46,7 +47,7 @@ function loginScreen(notice) {
 }
 
 /* ---------- Estructura general ---------- */
-const NAV = [["#/", "Panel", () => true], ["#/evaluaciones", "Evaluaciones", () => true], ["#/auditoria", "Auditoría", () => ctx.can("audit")], ["#/usuarios", "Usuarios", () => ctx.can("users")], ["#/incidentes", "Incidentes", () => true], ["#/manual", "Manual", () => true], ["#/cuenta", "Mi cuenta", () => true]];
+const NAV = [["#/", "Panel", () => true], ["#/evaluaciones", "Evaluaciones", () => true], ["#/auditoria", "Auditoría", () => ctx.can("audit")], ["#/usuarios", "Usuarios", () => ctx.can("users")], ["#/incidentes", "Incidentes", () => true], ["#/configuracion", "Configuración", () => ctx.can("aiConfig")], ["#/manual", "Manual", () => true], ["#/cuenta", "Mi cuenta", () => true]];
 let crumb, killSlot, killBar, content, navEl;
 
 function shell() {
@@ -105,6 +106,7 @@ const ROUTES = [
   [/^#\/usuarios$/, () => usersView(ctx)],
   [/^#\/incidentes$/, () => incidentsView(ctx)],
   [new RegExp(`^#/incidentes/${UUID}$`), (m) => incidentView(ctx, m[1])],
+  [/^#\/configuracion$/, () => aiConfigView(ctx)],
   [/^#\/manual$/, () => manualView(ctx)],
   [/^#\/cuenta$/, () => accountView(ctx)],
   [/^#\/autorizar\?/, () => authorizeView(ctx)],
@@ -133,6 +135,6 @@ window.addEventListener("hashchange", renderRoute);
 window.addEventListener("esc:unauthenticated", () => { if (ctx.me) { ctx.me = null; setCsrf(""); loginScreen("Tu sesión terminó. Inicia sesión de nuevo."); } });
 
 (async () => {
-  try { const r = await api("GET", "/api/me"); setCsrf(r.csrf); ctx.me = r; ctx.kill = r.killSwitch; shell(); }
+  try { const r = await api("GET", "/api/me"); setCsrf(r.csrf); ctx.me = r; ctx.kill = r.killSwitch; ctx.aiEnabled = r.aiEnabled; shell(); }
   catch { loginScreen(); }
 })();

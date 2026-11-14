@@ -10,8 +10,9 @@ import { buildReport } from "../report.js";
 import { broadScopeProblem } from "../scope.js";
 import type { State } from "../state.js";
 import { OAuth, OAuthError } from "../oauth.js";
-import { IncidentCreateIn, IncidentEvidenceIn, IncidentContainIn } from "../schemas.js";
+import { IncidentCreateIn, IncidentEvidenceIn, IncidentContainIn, AiConfigIn, AiAssistIn } from "../schemas.js";
 import { analyzeLog, analyzeEmailHeaders, containmentRules, buildIncidentReport, MAX_EVIDENCE_CHARS } from "../incident.js";
+import { runIncidentAssistant, testAnthropicKey } from "../ai.js";
 import { redact } from "../redact.js";
 import { Auth, WEB_ROLES, type Session, type WebRole } from "./auth.js";
 
@@ -34,6 +35,7 @@ const CAN = {
   users: ["authorizer"] as WebRole[],
   openIncident: ["authorizer", "operator"] as WebRole[],
   incidentWork: ["authorizer", "operator", "analyst"] as WebRole[],
+  aiConfig: ["authorizer"] as WebRole[],
 };
 
 const MODULE_LABELS: Record<string, { title: string; description: string }> = {
@@ -92,7 +94,7 @@ export function createApi(ctx: ApiCtx) {
   const mustFind = async (id: string) => { const r = await store.getAssessment(id); if (!r) throw new HttpError(404, "NOT_FOUND", "La evaluación no existe."); return r; };
 
   /* ---------- Cuenta ---------- */
-  route("GET", "/api/me", ALL, async ({ s }) => ({ user: s.user, csrf: s.csrf, killSwitch: await store.killSwitchInfo() }));
+  route("GET", "/api/me", ALL, async ({ s }) => ({ user: s.user, csrf: s.csrf, killSwitch: await store.killSwitchInfo(), aiEnabled: (await store.getAiConfig()).enabled }));
   route("POST", "/api/logout", ALL, async ({ s, req, res }) => { await auth.logout(s.id); await store.audit({ ...who(s), action: "auth:logout" }); res.setHeader("Set-Cookie", sessionCookie(req, "", 0)); return { ok: true }; });
   route("POST", "/api/password", ALL, async ({ s, body }) => {
     const r = await auth.changePassword(s.user, String(body.current ?? ""), String(body.next ?? ""), s.id);
@@ -294,6 +296,28 @@ export function createApi(ctx: ApiCtx) {
     return { text: buildIncidentReport(r.incident, r.evidence, format), format };
   });
 
+  /* ---------- Módulo de IA (API propia, dentro de la plataforma) ----------
+     Actúa con los mismos permisos que ya tiene el rol 'agent' en RolePermissions: nunca abre ni cierra
+     un incidente. La llave de API es de la propia organización; se guarda cifrada, nunca se devuelve. */
+  route("GET", "/api/ai/config", CAN.aiConfig, async () => store.getAiConfig());
+  route("POST", "/api/ai/config", CAN.aiConfig, async ({ s, body }) => {
+    const input = AiConfigIn.parse(body);
+    await store.setAiConfig(input, s.user.username);
+    return store.getAiConfig();
+  });
+  route("POST", "/api/ai/config/test", CAN.aiConfig, async ({ body }) => {
+    let apiKey = typeof body.apiKey === "string" && body.apiKey ? body.apiKey : undefined;
+    const model = typeof body.model === "string" && body.model ? body.model : "claude-sonnet-5-5";
+    if (!apiKey) { const secret = await store.getAiSecret(); if (!secret) throw new HttpError(400, "NO_KEY", "No hay una llave guardada ni se envió una para probar."); apiKey = secret.apiKey; }
+    return testAnthropicKey(apiKey, model);
+  });
+  route("POST", "/api/incidents/:id/ai-assist", CAN.incidentWork, async ({ s, params, body }) => {
+    const { question } = AiAssistIn.parse(body);
+    const r = await runIncidentAssistant({ store, incidentId: params[0], question, requestedBy: s.user.username });
+    if ("error" in r) throw new HttpError(400, r.error, r.message);
+    return r;
+  });
+
   /* ---------- Conexión de clientes MCP (OAuth) ---------- */
   const oauth = new OAuth(store);
   const OQ = ["client_id", "redirect_uri", "code_challenge", "code_challenge_method", "response_type", "state"];
@@ -325,7 +349,7 @@ export function createApi(ctx: ApiCtx) {
         const ip = String(req.headers["x-forwarded-for"] ?? req.socket.remoteAddress ?? "").split(",")[0].trim();
         const r = await auth.login(String(b.username ?? ""), String(b.password ?? ""), { ip, userAgent: String(req.headers["user-agent"] ?? "") });
         if (!r.ok) throw new HttpError(401, "CREDENTIALS", "Usuario o contraseña incorrectos, o la cuenta está bloqueada temporalmente.");
-        return send(res, 200, { user: r.session.user, csrf: r.session.csrf, killSwitch: await store.killSwitchInfo() }, { "Set-Cookie": sessionCookie(req, r.token, 8 * 3600) });
+        return send(res, 200, { user: r.session.user, csrf: r.session.csrf, killSwitch: await store.killSwitchInfo(), aiEnabled: (await store.getAiConfig()).enabled }, { "Set-Cookie": sessionCookie(req, r.token, 8 * 3600) });
       }
 
       const match = routes.map(r => ({ r, m: r.re.exec(path) })).find(x => x.m && x.r.method === req.method);

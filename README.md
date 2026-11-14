@@ -78,3 +78,9 @@ El manual de uso (conceptos, flujo, catálogo de módulos, mapa de cobertura fre
 Sesión aparte de las evaluaciones, para cuando la organización está siendo atacada ahora mismo. Analiza evidencia que tú aportas (logs, cabeceras de correo) para extraer IOCs y patrones de ataque, genera reglas de contención (iptables, ufw, nginx, Cloudflare) y el informe del caso con guía de a quién reportarlo. No toca ninguna red: las reglas se generan para que el propio equipo las aplique en su infraestructura.
 
 Herramientas MCP: `incident_open` (solo autorizador/operador), `incident_evidence_analyze`, `incident_contain_plan`, `incident_report`.
+
+## Módulo de IA por API (además de MCP)
+
+Segunda forma de conectar un modelo de IA, integrada en la propia consola, sin necesitar un cliente MCP aparte. Un autorizador guarda su llave de Anthropic en *Configuración → Integración IA* (se cifra con AES-256-GCM, nunca se devuelve ni se registra). Desde ahí, el panel *Asistente de IA* de cada incidente deja pedirle a la IA que analice la evidencia, genere el plan de contención o el informe, en lenguaje natural.
+
+El asistente actúa con exactamente los mismos permisos que ya tenía el rol `agent` por MCP (`incident_evidence_analyze`, `incident_contain_plan`, `incident_report`): nunca abre ni cierra un incidente, nunca ejecuta nada en ninguna red. Cada acción que dispara queda en el mismo registro de auditoría encadenado, con el actor `ia-modulo:<usuario>`.
