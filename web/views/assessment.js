@@ -113,7 +113,32 @@ function findingsTab(ctx, d, reload) {
       h("div", { class: "cols" }, h("div", {}, h("h3", {}, "Impacto de negocio"), h("p", {}, x.businessImpact)), h("div", {}, h("h3", {}, "Recomendación"), h("p", {}, x.recommendation)))))) : [empty("Sin hallazgos", "Los hallazgos aparecen aquí cuando el agente o un analista los registran.")];
   return h("div", { class: "stack" },
     panel("Hallazgos", h("div", {}, list), canWrite ? h("button", { class: "btn small primary", disabled: !open, title: open ? "" : "Disponible cuando la evaluación ya tuvo ejecuciones", onclick: () => { formBox.replaceChildren(findingForm(d, () => reload())); formBox.scrollIntoView({ block: "start" }); } }, "Registrar hallazgo") : null),
-    formBox, canWrite && !open ? h("p", { class: "hint" }, "Se pueden registrar hallazgos cuando la evaluación ya tuvo ejecuciones (estado «En ejecución» o posterior).") : null);
+    formBox, canWrite && !open ? h("p", { class: "hint" }, "Se pueden registrar hallazgos cuando la evaluación ya tuvo ejecuciones (estado «En ejecución» o posterior).") : null,
+    canWrite ? aiAssistPanel(ctx, d, reload) : null);
+}
+
+function aiAssistPanel(ctx, d, reload) {
+  if (!ctx.aiEnabled) return panel("Asistente de IA", h("div", { class: "body" }, h("p", { class: "muted" }, "El módulo de IA no está activado. Un autorizador puede activarlo en Configuración → Integración IA.")));
+  const out = h("div", {});
+  const q = h("textarea", { rows: 3, placeholder: "Pídele algo, p. ej.: «revisa los hallazgos y dime si falta algo» o «redacta el informe en borrador con lo confirmado hasta ahora»." });
+  const ask = async () => {
+    out.replaceChildren(h("p", { class: "muted" }, "Pensando…"));
+    try {
+      const r = await api("POST", `/api/assessments/${d.id}/ai-assist`, { question: q.value });
+      const actionNodes = r.actions.map((a) => {
+        if (a.result?.findingId) return h("p", {}, `✓ Hallazgo registrado (id ${a.result.findingId}).`);
+        if (a.result?.text) return h("div", { class: "stack" }, h("strong", {}, "Borrador de informe:"), h("pre", { class: "report" }, a.result.text));
+        if (a.result?.error) return h("p", { class: "err" }, `${a.result.error}${a.result.message ? ": " + a.result.message : ""}`);
+        return null;
+      }).filter(Boolean);
+      out.replaceChildren(h("div", { class: "stack" }, h("p", {}, r.answer), ...actionNodes));
+      q.value = "";
+      if (r.actions.some((a) => a.result?.findingId)) reload();
+    } catch (e) { out.replaceChildren(h("p", { class: "err" }, e.message)); }
+  };
+  return panel("Asistente de IA", h("div", { class: "body stack" },
+    h("p", { class: "muted" }, "Usa el modelo configurado por tu organización. Puede registrar hallazgos y redactar el informe (en borrador, sin cerrar el ciclo); nunca lanza un módulo contra una red real ni aprueba ningún plan."),
+    q, h("button", { class: "btn primary", onclick: ask }, "Preguntar a la IA"), out));
 }
 
 function findingForm(d, done) {

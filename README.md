@@ -83,4 +83,8 @@ Herramientas MCP: `incident_open` (solo autorizador/operador), `incident_evidenc
 
 Segunda forma de conectar un modelo de IA, integrada en la propia consola, sin necesitar un cliente MCP aparte. Un autorizador guarda su llave de Anthropic en *Configuración → Integración IA* (se cifra con AES-256-GCM, nunca se devuelve ni se registra). Desde ahí, el panel *Asistente de IA* de cada incidente deja pedirle a la IA que analice la evidencia, genere el plan de contención o el informe, en lenguaje natural.
 
-El asistente actúa con exactamente los mismos permisos que ya tenía el rol `agent` por MCP (`incident_evidence_analyze`, `incident_contain_plan`, `incident_report`): nunca abre ni cierra un incidente, nunca ejecuta nada en ninguna red. Cada acción que dispara queda en el mismo registro de auditoría encadenado, con el actor `ia-modulo:<usuario>`.
+Disponible en dos lugares, con el mismo panel *Asistente de IA*:
+- **Incidentes**: analizar evidencia, generar el plan de contención y el informe (`incident_evidence_analyze`, `incident_contain_plan`, `incident_report`). Nunca abre ni cierra un incidente.
+- **Evaluaciones** (pestaña Hallazgos): registrar hallazgos nuevos y redactar un borrador del informe (`finding_create`, `report_generate`). Nunca lanza un módulo contra una red real ni aprueba ningún plan — eso sigue siempre a cargo de un humano.
+
+En ambos casos, el asistente actúa con exactamente los mismos permisos que ya tenía el rol `agent` por MCP. Cada acción que dispara queda en el mismo registro de auditoría encadenado, con el actor `ia-modulo:<usuario>`.

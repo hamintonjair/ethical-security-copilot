@@ -12,7 +12,7 @@ import type { State } from "../state.js";
 import { OAuth, OAuthError } from "../oauth.js";
 import { IncidentCreateIn, IncidentEvidenceIn, IncidentContainIn, AiConfigIn, AiAssistIn } from "../schemas.js";
 import { analyzeLog, analyzeEmailHeaders, containmentRules, buildIncidentReport, MAX_EVIDENCE_CHARS } from "../incident.js";
-import { runIncidentAssistant, testAnthropicKey } from "../ai.js";
+import { runIncidentAssistant, runAssessmentAssistant, testAnthropicKey } from "../ai.js";
 import { redact } from "../redact.js";
 import { Auth, WEB_ROLES, type Session, type WebRole } from "./auth.js";
 
@@ -314,6 +314,12 @@ export function createApi(ctx: ApiCtx) {
   route("POST", "/api/incidents/:id/ai-assist", CAN.incidentWork, async ({ s, params, body }) => {
     const { question } = AiAssistIn.parse(body);
     const r = await runIncidentAssistant({ store, incidentId: params[0], question, requestedBy: s.user.username });
+    if ("error" in r) throw new HttpError(400, r.error, r.message);
+    return r;
+  });
+  route("POST", "/api/assessments/:id/ai-assist", CAN.findings, async ({ s, params, body }) => {
+    const { question } = AiAssistIn.parse(body);
+    const r = await runAssessmentAssistant({ store, assessmentId: params[0], question, requestedBy: s.user.username });
     if ("error" in r) throw new HttpError(400, r.error, r.message);
     return r;
   });

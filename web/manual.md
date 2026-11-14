@@ -125,9 +125,11 @@ Todos son de solo lectura o de impacto mínimo. Ninguno explota vulnerabilidades
 Hasta ahora, la única forma de que un modelo de IA razone sobre tus casos era conectar Claude por MCP desde tu propia cuenta. Esta sección añade una **segunda forma, por API**, integrada en la propia consola: tú guardas tu llave de Anthropic una sola vez y la plataforma la usa para ayudarte, sin que tengas que abrir Claude aparte.
 
 - **Dónde se configura**: *Configuración → Integración IA* (solo un autorizador). Se guarda cifrada (AES-256-GCM) con una llave derivada de `ESC_SIGNING_KEY`; nunca se devuelve ni se muestra completa, solo sus últimos 4 caracteres. El botón *Probar conexión* comprueba que la llave funciona sin exponerla.
-- **Dónde se usa (piloto)**: dentro de un caso de Incidentes, panel *Asistente de IA*. Le escribes lo que necesitas («revisa la evidencia y dime qué hacer», «genera el plan de contención») y responde en lenguaje natural.
-- **Mismos límites que el rol `agent` de siempre**: el asistente solo puede analizar evidencia, generar reglas de contención y generar el informe — las mismas tres herramientas que ya tenía permitidas el agente por MCP (`RolePermissions.agent`). **Nunca** puede abrir ni cerrar un incidente: eso lo decide siempre un humano, abras el caso desde la consola o uses la IA para lo demás.
-- **Nada se ejecuta solo**: igual que por MCP, las reglas de contención y los informes son texto para que tú los revises y apliques; el asistente no se conecta a ninguna red.
+- **Dónde se usa**:
+  - **Incidentes** → panel *Asistente de IA* en cada caso. Le escribes lo que necesitas («revisa la evidencia y dime qué hacer», «genera el plan de contención») y responde en lenguaje natural; puede analizar evidencia, generar reglas de contención y generar el informe (las tres herramientas que ya tenía el agente por MCP).
+  - **Evaluaciones** → pestaña *Hallazgos*, mismo panel. Le pides que revise los hallazgos, registre uno nuevo o redacte un borrador del informe. **No incluye lanzar módulos**: ejecutar algo contra una red real sigue necesitando siempre un plan aprobado por un humano, por MCP o por la consola.
+- **Mismos límites que el rol `agent` de siempre**: en cada sesión, el asistente solo puede usar las herramientas que `RolePermissions.agent` ya tenía permitidas por MCP. **Nunca** puede abrir/cerrar un incidente ni aprobar un plan: eso lo decide siempre un humano.
+- **Nada se ejecuta solo**: las reglas de contención, los hallazgos e informes son para que tú los revises; el asistente no se conecta a ninguna red.
 - **Auditoría**: cada acción que dispara el asistente queda en el mismo registro encadenado, con el actor `ia-modulo:<usuario que preguntó>`, para distinguirla de lo hecho por MCP o a mano.
 - **Costo**: las llamadas a la API de Anthropic las paga la cuenta dueña de la llave que configuraste; la plataforma no añade ningún cargo propio.
 

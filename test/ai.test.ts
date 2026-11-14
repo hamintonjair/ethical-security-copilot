@@ -6,7 +6,18 @@ import { Store } from "../src/store.js";
 import { Auth } from "../src/web/auth.js";
 import { createHttpApp } from "../src/http.js";
 import { encryptSecret, decryptSecret } from "../src/crypto.js";
-import { runIncidentAssistant } from "../src/ai.js";
+import { runIncidentAssistant, runAssessmentAssistant } from "../src/ai.js";
+
+const assessmentInput = (over: Record<string, unknown> = {}) => ({
+  name: "Evaluación de prueba IA",
+  authorizer: { organization: "Org Demo", name: "Ana Responsable", email: "ana@demo.test", emergencyContact: "+57 300 000 0000" },
+  allowedModes: ["passive", "lab", "active"],
+  scope: [{ type: "cidr", value: "203.0.113.0/24" }],
+  exclusions: [],
+  window: { notBefore: "2026-11-01T00:00:00Z", notAfter: "2026-12-01T00:00:00Z", maxRequestsPerSecond: 5, maxConcurrency: 2 },
+  allowedModules: ["port_check"],
+  ...over,
+});
 
 test("crypto: encryptSecret/decryptSecret van y vuelven; detecta manipulación", () => {
   const key = Buffer.alloc(32, 7);
@@ -122,5 +133,47 @@ test("IA: el asistente ejecuta solo herramientas ya permitidas para el rol 'agen
   assert.ok(entry);
   assert.equal(entry!.actor, "ia-modulo:omar");
   assert.equal(entry!.role, "agent");
+  await freshStore.close();
+});
+
+test("IA en Evaluaciones: puede registrar un hallazgo y redactar un informe, nunca lanza un módulo", async () => {
+  const freshStore = await Store.open("memory", KEY);
+  await freshStore.setAiConfig({ enabled: true, model: "claude-test", apiKey: "sk-ant-test-key" }, "ana");
+  const a = await freshStore.createAssessment(assessmentInput(), "ana");
+  for (const s of ["scope_validated", "planned", "approved", "executing"] as const) await freshStore.transition(a.id, s, "ana", "authorizer");
+
+  let call = 0;
+  const fetchImpl = (async () => {
+    call++;
+    if (call === 1) {
+      return new Response(JSON.stringify({ stop_reason: "tool_use", content: [
+        { type: "text", text: "Registro el hallazgo que describiste." },
+        { type: "tool_use", id: "t1", name: "finding_create", input: {
+          title: "Cabeceras de seguridad ausentes", asset: "203.0.113.10", severity: "medium",
+          cvssVector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N", cvssScore: 5.3, confidence: "high",
+          observedFacts: ["Falta Content-Security-Policy", "Falta X-Frame-Options"], riskHypotheses: ["Clickjacking"],
+          evidence: [{ description: "Respuesta HTTP", redactedContent: "HTTP/1.1 200 OK", reproSteps: ["curl -I https://203.0.113.10"] }],
+          businessImpact: "Facilita ataques del lado del cliente.", recommendation: "Agregar las cabeceras faltantes.",
+        } },
+      ] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ stop_reason: "end_turn", content: [{ type: "text", text: "Listo, ya quedó registrado." }] }), { status: 200 });
+  }) as typeof fetch;
+
+  const r = await runAssessmentAssistant({ store: freshStore, assessmentId: a.id, question: "registra este hallazgo", requestedBy: "omar", fetchImpl });
+  assert.ok(!("error" in r), JSON.stringify(r));
+  if ("error" in r) throw new Error("unreachable");
+  assert.equal(r.actions.length, 1);
+  assert.ok((r.actions[0].result as any).findingId);
+
+  const findings = await freshStore.listFindings(a.id);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].data.severity, "medium");
+
+  const audit = await freshStore.listAudit(5, 0);
+  const entry = audit.rows.find((x) => x.action === "finding_create");
+  assert.equal(entry?.actor, "ia-modulo:omar");
+  assert.equal(entry?.role, "agent");
+
   await freshStore.close();
 });
