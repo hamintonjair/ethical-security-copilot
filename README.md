@@ -85,6 +85,8 @@ Herramientas MCP: `incident_open` (solo autorizador/operador), `incident_types_s
 
 Una vez marcado un tipo (manual o aceptando la sugerencia), el caso muestra su guía de contención curada ("Opciones de bloqueo") para ese tipo, pensada para que el equipo la ejecute en su propia infraestructura — nunca se aplica desde la plataforma.
 
+**Exportar a PDF.** Tanto el informe de un incidente (`GET /api/incidents/:id/report?format=pdf`) como la vista previa del informe de una evaluación (`GET /api/assessments/:id/report?format=pdf&includeStates=...`) se pueden descargar en PDF con un clic ("Descargar PDF" en la consola) — útil para entregar a un cliente o adjuntar a una denuncia ante el CSIRT. La descarga de la evaluación es siempre una vista previa: no avanza el ciclo ni reemplaza el "Cerrar informe" (que sigue firmando y cambiando el estado).
+
 ## Módulo de IA por API (además de MCP)
 
 Segunda forma de conectar un modelo de IA, integrada en la propia consola, sin necesitar un cliente MCP aparte. Un autorizador guarda su llave de Anthropic en *Configuración → Integración IA* (se cifra con AES-256-GCM, nunca se devuelve ni se registra). Desde ahí, el panel *Asistente de IA* de cada incidente deja pedirle a la IA que analice la evidencia, genere el plan de contención o el informe, en lenguaje natural.

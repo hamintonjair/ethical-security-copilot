@@ -179,5 +179,5 @@ export async function incidentView(ctx, id) {
     !closed ? aiPanel() : null,
     panel("Plan de contención", h("div", { class: "body stack" }, h("p", { class: "muted" }, `IOCs acumulados: ${allIps.length} IP(s), ${allDomains.length} dominio(s).`),
       h("button", { class: "btn primary", disabled: !allIps.length && !allDomains.length, onclick: buildContain }, "Generar reglas de bloqueo"), containBox)),
-    panel("Informe", h("div", { class: "body stack" }, h("div", { class: "row" }, h("button", { class: "btn primary", onclick: () => buildReport("markdown") }, "Ver informe (Markdown)"), h("button", { class: "btn", onclick: () => buildReport("json") }, "Ver informe (JSON)")), reportBox))) };
+    panel("Informe", h("div", { class: "body stack" }, h("div", { class: "row" }, h("button", { class: "btn primary", onclick: () => buildReport("markdown") }, "Ver informe (Markdown)"), h("button", { class: "btn", onclick: () => buildReport("json") }, "Ver informe (JSON)"), h("a", { class: "btn", href: `/api/incidents/${id}/report?format=pdf`, target: "_blank" }, "Descargar PDF")), reportBox))) };
 }

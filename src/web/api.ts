@@ -14,6 +14,7 @@ import { IncidentCreateIn, IncidentEvidenceIn, IncidentContainIn, IncidentTypesI
 import { analyzeLog, analyzeEmailHeaders, containmentRules, buildIncidentReport, suggestIncidentTypes, TYPE_GUIDANCE, MAX_EVIDENCE_CHARS } from "../incident.js";
 import { runIncidentAssistant, runAssessmentAssistant, testAnthropicKey } from "../ai.js";
 import { redact } from "../redact.js";
+import { markdownToPdf } from "../pdf.js";
 import { Auth, WEB_ROLES, type Session, type WebRole } from "./auth.js";
 
 const COOKIE = "esc_session";
@@ -209,6 +210,16 @@ export function createApi(ctx: ApiCtx) {
     if (!r.ok) throw new HttpError(404, r.error, "La evaluación no existe o su firma no es válida.");
     return { text: r.text, findings: r.findings, format: o.format };
   });
+  route("GET", "/api/assessments/:id/report", ALL, async ({ s, params, query, res }) => {
+    const states = (query.get("includeStates") ?? "confirmed").split(",").map((x) => x.trim()).filter(Boolean);
+    const o = ReportIn.parse({ format: "markdown", includeStates: states, finalize: false });
+    const r = await buildReport(store, { assessmentId: params[0], format: "markdown", includeStates: o.includeStates, advance: false, actor: s.user.username, role: s.user.role as WebRole });
+    if (!r.ok) throw new HttpError(404, r.error, "La evaluación no existe o su firma no es válida.");
+    const pdf = await markdownToPdf("Informe de evaluación", r.text, { subtitle: `Vista previa · ${r.findings} hallazgo(s) · Generado ${new Date().toLocaleString("es-CO")}` });
+    res.writeHead(200, { "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="informe-${params[0].slice(0, 8)}.pdf"`, "Cache-Control": "no-store" });
+    res.end(pdf);
+    return null;
+  });
 
   /* ---------- Kill switch ---------- */
   route("POST", "/api/killswitch", CAN.killOn, async ({ s, body }) => {
@@ -302,9 +313,17 @@ export function createApi(ctx: ApiCtx) {
     await store.audit({ ...who(s), action: "incident:contain_plan", assessmentId: params[0], payload: { ips: input.ips.length, domains: input.domains.length, targets: input.targets } });
     return { rules };
   });
-  route("GET", "/api/incidents/:id/report", ALL, async ({ params, query }) => {
+  route("GET", "/api/incidents/:id/report", ALL, async ({ params, query, res }) => {
     const r = await mustFindIncident(params[0]);
-    const format = query.get("format") === "json" ? "json" : "markdown";
+    const q = query.get("format");
+    if (q === "pdf") {
+      const text = buildIncidentReport(r.incident, r.evidence, "markdown");
+      const pdf = await markdownToPdf(`Incidente: ${r.incident.organization}`, text, { subtitle: `Generado ${new Date().toLocaleString("es-CO")}` });
+      res.writeHead(200, { "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="incidente-${params[0].slice(0, 8)}.pdf"`, "Cache-Control": "no-store" });
+      res.end(pdf);
+      return null;
+    }
+    const format = q === "json" ? "json" : "markdown";
     return { text: buildIncidentReport(r.incident, r.evidence, format), format };
   });
 
@@ -384,7 +403,9 @@ export function createApi(ctx: ApiCtx) {
         throw new HttpError(403, "FORBIDDEN", "Tu rol no tiene permiso para esto.");
       }
       const body = mutating ? await readJson(req) : {};
-      return send(res, 200, await match.r.h({ req, res, s, body, params: match.m!.slice(1), query }));
+      const result = await match.r.h({ req, res, s, body, params: match.m!.slice(1), query });
+      if (res.writableEnded) return; // el handler ya escribió la respuesta en bruto (p. ej. un PDF)
+      return send(res, 200, result);
     } catch (e) {
       if (e instanceof HttpError) return send(res, e.status, { error: e.code, message: e.message });
       if (e instanceof ZodError) return send(res, 400, validationError(e));

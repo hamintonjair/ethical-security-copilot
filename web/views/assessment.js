@@ -176,6 +176,9 @@ function reportTab(ctx, d) {
   let last = null;
   const states = h("div", { class: "checks" }, Object.entries(TRIAGE).map(([v, l]) => h("label", {}, h("input", { type: "checkbox", name: "st", value: v, checked: v === "confirmed" }), l)));
   const fmt = h("select", { id: "rfmt" }, h("option", { value: "markdown" }, "Markdown"), h("option", { value: "json" }, "JSON"));
+  const pdfLink = h("a", { class: "btn", href: `/api/assessments/${d.id}/report?includeStates=confirmed`, target: "_blank" }, "Descargar PDF (confirmados)");
+  const updatePdfLink = () => { const inc = [...states.querySelectorAll("input:checked")].map((i) => i.value).join(",") || "confirmed"; pdfLink.href = `/api/assessments/${d.id}/report?includeStates=${encodeURIComponent(inc)}`; };
+  states.addEventListener("change", updatePdfLink);
   const gen = async (finalize) => {
     const includeStates = [...states.querySelectorAll("input:checked")].map((i) => i.value);
     if (!includeStates.length) return toast("Elige al menos un estado de hallazgo.", true);
@@ -192,6 +195,6 @@ function reportTab(ctx, d) {
     h("div", { class: "field" }, h("span", { class: "legend" }, "Incluir hallazgos"), states, h("span", { class: "hint" }, "Por defecto solo los confirmados.")),
     h("div", { class: "field" }, h("label", { for: "rfmt" }, "Formato"), fmt),
     h("div", { class: "row" }, h("button", { class: "btn primary", onclick: () => gen(false) }, "Vista previa"),
-      ctx.can("finalize") ? h("button", { class: "btn", onclick: () => gen(true) }, "Cerrar informe") : null),
+      ctx.can("finalize") ? h("button", { class: "btn", onclick: () => gen(true) }, "Cerrar informe") : null, pdfLink),
     h("p", { class: "hint" }, "El informe separa hechos observados de hipótesis, redacta datos sensibles e incluye el estado de la cadena de auditoría."))), out);
 }

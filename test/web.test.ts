@@ -111,6 +111,18 @@ test("roles: cada rol solo hace lo suyo", async () => {
   assert.equal((await ana.call("GET", "/api/users")).status, 200);
 });
 
+test("informe de evaluación en PDF: vista previa, no cambia el estado", async () => {
+  const ana = await as("ana");
+  const { json: a } = await ana.call("POST", "/api/assessments", newAssessment());
+  const pdf = await fetch(base + `/api/assessments/${a.id}/report?includeStates=confirmed,unverified`, { headers: { Cookie: ana.cookie } });
+  assert.equal(pdf.status, 200);
+  assert.equal(pdf.headers.get("content-type"), "application/pdf");
+  const buf = Buffer.from(await pdf.arrayBuffer());
+  assert.equal(buf.subarray(0, 5).toString("latin1"), "%PDF-");
+  // sigue en "draft": la vista previa no avanza el ciclo
+  assert.equal((await ana.call("GET", `/api/assessments/${a.id}`)).json.state, "draft");
+});
+
 test("ciclo: avanzar, no saltar estados, y el kill switch detiene y bloquea", async () => {
   const ana = await as("ana"), omar = await as("omar");
   const { json: a } = await ana.call("POST", "/api/assessments", newAssessment());
@@ -268,6 +280,12 @@ test("incidentes: abrir, analizar evidencia, contención, informe y roles", asyn
 
   const rep = await aud.call("GET", `/api/incidents/${id}/report?format=markdown`);
   assert.equal(rep.status, 200); assert.match(rep.json.text, /colCERT/);
+
+  const pdf = await fetch(base + `/api/incidents/${id}/report?format=pdf`, { headers: { Cookie: aud.cookie } });
+  assert.equal(pdf.status, 200);
+  assert.equal(pdf.headers.get("content-type"), "application/pdf");
+  const pdfBuf = Buffer.from(await pdf.arrayBuffer());
+  assert.equal(pdfBuf.subarray(0, 5).toString("latin1"), "%PDF-");
 
   assert.equal((await ana.call("POST", `/api/incidents/${id}/status`, { status: "contained" })).status, 200);
   assert.equal((await ana.call("POST", `/api/incidents/${id}/status`, { status: "closed" })).status, 200);

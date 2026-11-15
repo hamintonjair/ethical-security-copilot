@@ -69,7 +69,7 @@ Para cuando a la organización la están atacando **ahora mismo**. Es una sesió
    - **Automático**: cada vez que analizas evidencia, el sistema detecta por sí solo qué tipo(s) encajan según los patrones hallados (p. ej. SPF/DKIM/DMARC fallidos → phishing; fuerza bruta/inyección → ataque web; muchas IPs simultáneas → DDoS) y te los **sugiere** con su razón, junto con las opciones de bloqueo de ese tipo. **Nunca se marca solo**: aparecen dos botones, "Marcar estos tipos" (lo confirmas tú) u "Omitir" — el humano siempre tiene la última palabra.
    - En cuanto un tipo queda marcado (a mano o aceptando la sugerencia), el caso muestra su propia guía curada de **opciones de bloqueo** para ese tipo exacto — contención pensada para que tu equipo la ejecute en su infraestructura, nunca aplicada desde aquí.
 4. **Plan de contención**: con las IPs/dominios acumulados de toda la evidencia, genera reglas listas para pegar: `iptables`, `ufw`, un bloque `nginx deny`, una regla de Cloudflare (Firewall Rules / WAF) y una lista de dominios sospechosos. **Nada se ejecuta**: las aplicas tú mismo en tu firewall, tu servidor o tu panel.
-5. **Informe**: línea de tiempo de la evidencia, todos los IOCs acumulados, y a quién reportar: el *abuse contact* del hosting del atacante (`whois <ip>`), el CSIRT nacional (**colCERT** en Colombia, más la Policía Nacional - Centro Cibernético, para denuncia formal), o el CERT de tu país si no es Colombia. Incluye cómo preservar evidencia para una denuncia.
+5. **Informe**: línea de tiempo de la evidencia, todos los IOCs acumulados, y a quién reportar: el *abuse contact* del hosting del atacante (`whois <ip>`), el CSIRT nacional (**colCERT** en Colombia, más la Policía Nacional - Centro Cibernético, para denuncia formal), o el CERT de tu país si no es Colombia. Incluye cómo preservar evidencia para una denuncia. El botón "Descargar PDF" genera un documento listo para adjuntar a esa denuncia o enviar al cliente.
 6. **Estados**: *Abierto → Contenido → Cerrado*. Un incidente cerrado no admite más evidencia, ni se le pueden cambiar los tipos, ni se puede reabrir.
 
 Pídeselo a Claude, por ejemplo: «Analiza este log del incidente `<id>` y dime qué encuentra», «Genera el plan de contención con las IPs que ya encontramos» o «¿Qué tipo de incidente sugiere esta evidencia y qué opciones de bloqueo tiene?».
@@ -176,7 +176,7 @@ En modo activo, Claude te dirá que hay un plan pendiente. Apruébalo en la cons
 - **Severidad y CVSS**: cada hallazgo lleva un puntaje que debe corresponder a su banda (info 0, baja 0,1–3,9, media 4–6,9, alta 7–8,9, crítica 9–10).
 - **Confianza**: alta (confirmado con evidencia directa), media o baja.
 - **Triaje**: *Sin verificar* → *Confirmado*, *Falso positivo* o *Riesgo aceptado*. Revisa cada uno antes de informar.
-- **Informe**: por defecto incluye solo los confirmados. Está disponible en Markdown y JSON, y siempre indica el estado de la cadena de auditoría.
+- **Informe**: por defecto incluye solo los confirmados. Está disponible en Markdown, JSON y **PDF** (botón "Descargar PDF" en la pestaña *Informe*), y siempre indica el estado de la cadena de auditoría. La descarga en PDF es siempre una vista previa: no avanza el ciclo ni reemplaza *Cerrar informe*.
 
 ## 12. Límites éticos y legales
 
