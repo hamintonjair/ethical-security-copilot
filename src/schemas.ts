@@ -145,6 +145,9 @@ export const ReportGenerateIn = z.object({
    Solo analiza evidencia que la organización aporta y genera reglas/informes para que ELLOS
    los apliquen en su propia infraestructura. No abre ninguna conexión de red. */
 export const IncidentType = z.enum(["phishing_email", "network_intrusion", "malware_ransomware", "ddos", "data_breach", "unauthorized_access", "web_attack", "other"]);
+// Herramientas de bloqueo que la organización ya tiene disponibles (firewall/iptables-ufw, nginx, Cloudflare).
+// Marcarlas al abrir el caso solo sirve para preseleccionar el plan de contención; no excluye generar para "all".
+export const ContainmentTool = z.enum(["firewall", "nginx", "cloudflare"]);
 export const IncidentCreateIn = z.object({
   organization: z.string().min(1).max(200),
   contactName: z.string().min(1).max(200),
@@ -152,8 +155,10 @@ export const IncidentCreateIn = z.object({
   summary: z.string().min(5).max(2000),
   affectedAssets: z.array(z.string().max(200)).max(50).default([]),
   types: z.array(IncidentType).max(8).default([]), // marcados por el humano al abrir el caso; editables después
+  containmentTargets: z.array(ContainmentTool).max(3).default([]), // herramientas de bloqueo que usará el equipo; [] = todas
 });
 export const IncidentTypesIn = z.object({ types: z.array(IncidentType).max(8) });
+export const IncidentTargetsIn = z.object({ targets: z.array(ContainmentTool).max(3) });
 export const IncidentEvidenceIn = z.object({
   incidentId: z.string().uuid(),
   kind: z.enum(["log", "email_headers", "other"]),
@@ -164,7 +169,7 @@ export const IncidentContainIn = z.object({
   incidentId: z.string().uuid(),
   ips: z.array(z.string()).max(500).default([]),
   domains: z.array(z.string()).max(200).default([]),
-  targets: z.enum(["firewall", "nginx", "cloudflare", "all"]).default("all"),
+  targets: z.union([z.enum(["firewall", "nginx", "cloudflare", "all"]), z.array(ContainmentTool).min(1).max(3)]).default("all"),
 });
 export const IncidentReportIn = z.object({
   incidentId: z.string().uuid(),
@@ -197,9 +202,9 @@ export const AuditEntry = z.object({
 
 /* ---------- Permisos por rol ---------- */
 export const RolePermissions: Record<z.infer<typeof Role>, string[]> = {
-  authorizer: ["assessment_create", "scope_validate", "scan_stop", "incident_open", "incident_types_set", "incident_evidence_analyze", "incident_contain_plan", "incident_report"],
-  operator:   ["scope_validate", "scan_initiate", "scan_stop", "approve_plan", "incident_open", "incident_types_set", "incident_evidence_analyze", "incident_contain_plan", "incident_report"],
-  analyst:    ["scope_validate", "finding_create", "report_generate", "incident_types_set", "incident_evidence_analyze", "incident_contain_plan", "incident_report"],
-  agent:      ["scope_validate", "scan_initiate", "scan_stop", "finding_create", "report_generate", "incident_types_set", "incident_evidence_analyze", "incident_contain_plan", "incident_report"], // nunca abre el caso ni cierra el incidente: eso lo decide un humano
+  authorizer: ["assessment_create", "scope_validate", "scan_stop", "incident_open", "incident_types_set", "incident_targets_set", "incident_evidence_analyze", "incident_contain_plan", "incident_report"],
+  operator:   ["scope_validate", "scan_initiate", "scan_stop", "approve_plan", "incident_open", "incident_types_set", "incident_targets_set", "incident_evidence_analyze", "incident_contain_plan", "incident_report"],
+  analyst:    ["scope_validate", "finding_create", "report_generate", "incident_types_set", "incident_targets_set", "incident_evidence_analyze", "incident_contain_plan", "incident_report"],
+  agent:      ["scope_validate", "scan_initiate", "scan_stop", "finding_create", "report_generate", "incident_types_set", "incident_targets_set", "incident_evidence_analyze", "incident_contain_plan", "incident_report"], // nunca abre el caso ni cierra el incidente: eso lo decide un humano
   auditor:    ["audit_read", "report_generate", "incident_report"],
 };

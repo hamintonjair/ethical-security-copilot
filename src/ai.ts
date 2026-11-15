@@ -87,6 +87,13 @@ const INCIDENT_TOOLS: ToolDef[] = [
     }, required: ["types"] },
   },
   {
+    name: "incident_targets_set",
+    description: "Marca (o reemplaza) qué herramientas de bloqueo (firewall/iptables-ufw, nginx, Cloudflare) tiene disponibles el equipo para este caso. SOLO se debe llamar después de que el humano lo confirme explícitamente en el chat.",
+    input_schema: { type: "object", properties: {
+      targets: { type: "array", items: { type: "string", enum: ["firewall", "nginx", "cloudflare"] } },
+    }, required: ["targets"] },
+  },
+  {
     name: "incident_contain_plan",
     description: "Genera reglas de bloqueo (firewall, nginx, Cloudflare) a partir de IPs/dominios para que el equipo humano las aplique en SU PROPIA infraestructura. No ejecuta nada.",
     input_schema: { type: "object", properties: {
@@ -120,8 +127,10 @@ export async function runIncidentAssistant(opts: {
     `Ámbito estricto: SOLO analizas evidencia que el humano te da y generas texto para que ÉL decida y aplique — nunca te conectas a ninguna red, nunca ejecutas nada, ` +
     `nunca abres ni cierras el caso (eso solo lo hace un humano). "Cerrar el paso, no contraatacar": jamás propongas ni describas atacar, acceder o dañar sistemas de terceros, ` +
     `ni siquiera los del presunto atacante. Responde siempre en español, de forma clara y concreta. Usa las herramientas disponibles cuando el humano pida contención o un informe. ` +
-    `IMPORTANTE sobre incident_types_set: cuando incident_evidence_analyze te devuelva "suggestedTypes", son solo sugerencias — pregúntale primero al humano cuáles quiere marcar y llama a incident_types_set solo con los que él confirme, nunca con todos automáticamente.\n\n` +
-    `Caso: ${rec.incident.organization} — ${rec.incident.summary}\nEstado: ${rec.incident.status}\nTipos ya marcados: ${rec.incident.types?.length ? rec.incident.types.join(", ") : "ninguno todavía"}\n\n${evidenceSummary}`;
+    `IMPORTANTE sobre incident_types_set: cuando incident_evidence_analyze te devuelva "suggestedTypes", son solo sugerencias — pregúntale primero al humano cuáles quiere marcar y llama a incident_types_set solo con los que él confirme, nunca con todos automáticamente. ` +
+    `IMPORTANTE sobre incident_targets_set: úsala solo cuando el humano te diga explícitamente qué herramientas de bloqueo (firewall, nginx, Cloudflare) tiene disponibles.\n\n` +
+    `Caso: ${rec.incident.organization} — ${rec.incident.summary}\nEstado: ${rec.incident.status}\nTipos ya marcados: ${rec.incident.types?.length ? rec.incident.types.join(", ") : "ninguno todavía"}\n` +
+    `Herramientas de bloqueo ya marcadas: ${rec.incident.containmentTargets?.length ? rec.incident.containmentTargets.join(", ") : "ninguna todavía (se generará para todas por defecto)"}\n\n${evidenceSummary}`;
 
   const execTool = async (name: string, input: Record<string, unknown>): Promise<unknown> => {
     const actor = aiActor(requestedBy);
@@ -140,6 +149,12 @@ export async function runIncidentAssistant(opts: {
       const ok = await store.setIncidentTypes(incidentId, types, actor, "agent");
       if (!ok) return { error: "no se pudo guardar (¿incidente cerrado o inexistente?)" };
       return { types, guidance: Object.fromEntries(types.map((t) => [t, (TYPE_GUIDANCE as Record<string, string[]>)[t]])) };
+    }
+    if (name === "incident_targets_set") {
+      const targets = Array.isArray(input.targets) ? input.targets.map(String) : [];
+      const ok = await store.setIncidentContainmentTargets(incidentId, targets, actor, "agent");
+      if (!ok) return { error: "no se pudo guardar (¿incidente cerrado o inexistente?)" };
+      return { containmentTargets: targets };
     }
     if (name === "incident_contain_plan") {
       const ips = Array.isArray(input.ips) ? input.ips.map(String) : [];

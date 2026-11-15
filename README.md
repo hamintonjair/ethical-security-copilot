@@ -77,7 +77,9 @@ El manual de uso (conceptos, flujo, catálogo de módulos, mapa de cobertura fre
 
 Sesión aparte de las evaluaciones, para cuando la organización está siendo atacada ahora mismo. Analiza evidencia que tú aportas (logs, cabeceras de correo) para extraer IOCs y patrones de ataque, genera reglas de contención (iptables, ufw, nginx, Cloudflare) y el informe del caso con guía de a quién reportarlo. No toca ninguna red: las reglas se generan para que el propio equipo las aplique en su infraestructura.
 
-Herramientas MCP: `incident_open` (solo autorizador/operador), `incident_types_set`, `incident_evidence_analyze`, `incident_contain_plan`, `incident_report`.
+Herramientas MCP: `incident_open` (solo autorizador/operador), `incident_types_set`, `incident_targets_set`, `incident_evidence_analyze`, `incident_contain_plan`, `incident_report`.
+
+**Herramientas de bloqueo disponibles.** Igual que el tipo de incidente, el caso puede marcar (al abrirlo o después con "Marcar / editar herramientas de bloqueo") cuáles herramientas de contención tiene el equipo: firewall/`iptables`-`ufw`, Nginx o Cloudflare. Es solo una preselección — si no se marca ninguna, el plan de contención se genera igualmente para las tres; si se marcan una o varias, "Generar reglas de bloqueo" solo produce esas. Nunca se aplica nada por sí sola.
 
 **Tipo de incidente (check-out humano + detección automática).** Cada caso puede marcarse con uno o varios tipos (phishing, intrusión en la red, malware/ransomware, DDoS, fuga de datos, acceso no autorizado, ataque web, otro). Dos caminos, ambos sin saltarse al humano:
 - **Manual**: al abrir el caso, o después con "Marcar / editar tipos", el humano marca los checkboxes que correspondan (`incident_types_set`).

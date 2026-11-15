@@ -12,6 +12,14 @@ export interface Pattern { title: string; severity: "info" | "low" | "medium" | 
 export const IncidentTypeValues = ["phishing_email", "network_intrusion", "malware_ransomware", "ddos", "data_breach", "unauthorized_access", "web_attack", "other"] as const;
 export type IncidentTypeT = typeof IncidentTypeValues[number];
 
+export const ContainmentToolValues = ["firewall", "nginx", "cloudflare"] as const;
+export type ContainmentToolT = typeof ContainmentToolValues[number];
+export const CONTAINMENT_TOOL_LABELS: Record<ContainmentToolT, string> = {
+  firewall: "Firewall (iptables / ufw)",
+  nginx: "Nginx (deny)",
+  cloudflare: "Cloudflare (Firewall Rules / WAF)",
+};
+
 export const INCIDENT_TYPE_LABELS: Record<IncidentTypeT, string> = {
   phishing_email: "Phishing de correo",
   network_intrusion: "Intrusión de red",
@@ -158,9 +166,10 @@ export function analyzeEmailHeaders(text: string): { facts: string[]; patterns: 
 const asCidr = (ip: string) => (ip.includes(":") ? `${ip}/128` : `${ip}/32`);
 
 /** Reglas listas para pegar. Nunca se ejecutan aquí: el equipo de la empresa las aplica en SU propio equipo. */
-export function containmentRules(ips: string[], domains: string[], targets: "firewall" | "nginx" | "cloudflare" | "all"): Record<string, string> {
+export function containmentRules(ips: string[], domains: string[], targets: "firewall" | "nginx" | "cloudflare" | "all" | ContainmentToolT[]): Record<string, string> {
   const out: Record<string, string> = {};
-  const want = (t: string) => targets === "all" || targets === t;
+  const list = Array.isArray(targets) ? targets : [targets];
+  const want = (t: string) => list.includes("all") || list.includes(t as ContainmentToolT);
   if (want("firewall") && ips.length) out["iptables.sh"] = ["#!/bin/sh", "# Bloqueo de emergencia — revisar antes de aplicar; usar `iptables -D` con la misma línea para revertir.",
     ...ips.map(ip => `iptables -I INPUT -s ${asCidr(ip)} -j DROP`)].join("\n") + "\n";
   if (want("firewall") && ips.length) out["ufw.sh"] = ["#!/bin/sh", "# Alternativa con ufw.", ...ips.map(ip => `ufw deny from ${ip}`)].join("\n") + "\n";

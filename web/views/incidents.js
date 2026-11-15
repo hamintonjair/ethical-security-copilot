@@ -15,10 +15,16 @@ const INCIDENT_TYPES = [
   ["other", "Otro"],
 ];
 const TYPE_LABEL = Object.fromEntries(INCIDENT_TYPES);
+const CONTAINMENT_TOOLS = [
+  ["firewall", "Firewall (iptables / ufw)"],
+  ["nginx", "Nginx (deny)"],
+  ["cloudflare", "Cloudflare (Firewall Rules / WAF)"],
+];
+const TOOL_LABEL = Object.fromEntries(CONTAINMENT_TOOLS);
 
-/** Diálogo de checkboxes para marcar tipos de incidente. El humano decide; nada se marca solo. */
-const pickTypes = (title, intro, selected = []) => openDialog((close) => {
-  const boxes = INCIDENT_TYPES.map(([val, label]) => {
+/** Diálogo genérico de checkboxes. El humano decide; nada se marca solo. */
+const pickFrom = (options, title, intro, selected = []) => openDialog((close) => {
+  const boxes = options.map(([val, label]) => {
     const cb = h("input", { type: "checkbox", value: val, checked: selected.includes(val) });
     return { val, cb, node: h("label", {}, cb, ` ${label}`) };
   });
@@ -31,6 +37,8 @@ const pickTypes = (title, intro, selected = []) => openDialog((close) => {
       h("button", { type: "submit", class: "btn primary" }, "Guardar")));
   return form;
 });
+const pickTypes = (title, intro, selected = []) => pickFrom(INCIDENT_TYPES, title, intro, selected);
+const pickTargets = (title, intro, selected = []) => pickFrom(CONTAINMENT_TOOLS, title, intro, selected);
 
 export async function incidentsView(ctx) {
   const list = await api("GET", "/api/incidents");
@@ -48,7 +56,8 @@ export async function incidentsView(ctx) {
     });
     if (!v) return;
     const types = await pickTypes("Tipo de incidente", "Marca el tipo o tipos que correspondan (opcional, se puede editar después). Esto no activa nada: solo ayuda a mostrar las opciones de bloqueo adecuadas para tu caso.");
-    const body = { ...v, affectedAssets: (v.affectedAssets ?? "").split(",").map((s) => s.trim()).filter(Boolean), types: types ?? [] };
+    const containmentTargets = await pickTargets("Herramientas de bloqueo disponibles", "¿Con cuáles de estas cuenta tu equipo? (opcional, se puede editar después). Si no marcas ninguna, el plan de contención se genera para todas.");
+    const body = { ...v, affectedAssets: (v.affectedAssets ?? "").split(",").map((s) => s.trim()).filter(Boolean), types: types ?? [], containmentTargets: containmentTargets ?? [] };
     try { const r = await api("POST", "/api/incidents", body); toast("Caso abierto."); ctx.go(`#/incidentes/${r.id}`); } catch (e) { toast(e.message, true); }
   };
   const rows = list.map((i) => h("tr", {}, h("td", {}, h("a", { href: `#/incidentes/${i.id}` }, i.organization)), h("td", {}, i.summary.slice(0, 80)),
@@ -75,6 +84,12 @@ export async function incidentView(ctx, id) {
     const types = await pickTypes("Editar tipos de incidente", "Marca los tipos que correspondan. Nada se aplica solo: tú decides.", d.types ?? []);
     if (types === null) return;
     try { await api("POST", `/api/incidents/${id}/types`, { types }); toast("Tipos actualizados."); reload(); } catch (e) { toast(e.message, true); }
+  };
+
+  const editTargets = async () => {
+    const targets = await pickTargets("Herramientas de bloqueo disponibles", "¿Con cuáles cuenta tu equipo? Si no marcas ninguna, el plan de contención se genera para todas.", d.containmentTargets ?? []);
+    if (targets === null) return;
+    try { await api("POST", `/api/incidents/${id}/targets`, { targets }); toast("Herramientas actualizadas."); reload(); } catch (e) { toast(e.message, true); }
   };
 
   const suggestBox = h("div", {});
@@ -118,7 +133,8 @@ export async function incidentView(ctx, id) {
   const containBox = h("div", {});
   const buildContain = async () => {
     try {
-      const r = await api("POST", `/api/incidents/${id}/contain`, { ips: allIps, domains: allDomains, targets: "all" });
+      const targets = (d.containmentTargets ?? []).length ? d.containmentTargets : "all";
+      const r = await api("POST", `/api/incidents/${id}/contain`, { ips: allIps, domains: allDomains, targets });
       const files = Object.entries(r.rules);
       containBox.replaceChildren(h("div", { class: "stack" }, h("p", { class: "muted" }, "Estas reglas no se aplican solas: cópialas y ejecútalas tú en tu propio firewall, nginx o Cloudflare."),
         ...files.map(([name, content]) => h("div", { class: "stack" }, h("div", { class: "row" }, h("strong", {}, name), h("button", { class: "btn small", onclick: () => copyText(content) }, "Copiar"), h("button", { class: "btn small", onclick: () => download(name, content, "text/plain") }, "Descargar")), h("pre", { class: "report" }, content)))));
@@ -165,9 +181,11 @@ export async function incidentView(ctx, id) {
     h("div", { class: "page-head" }, h("div", {}, h("h1", {}, d.organization), h("p", { class: "row" }, seal(STATUS[d.status] ?? d.status, STATUS_TONE[d.status]), h("span", { class: "muted" }, `Abierto ${fmtDate(d.createdAt)} por ${d.createdBy}`)))),
     panel("Resumen", h("div", { class: "body" }, h("dl", { class: "facts" }, h("dt", {}, "Contacto"), h("dd", {}, `${d.contactName} · ${d.contactEmail}`),
       h("dt", {}, "Activos afectados"), h("dd", {}, d.affectedAssets.join(", ") || "sin especificar"), h("dt", {}, "Qué está pasando"), h("dd", {}, d.summary),
-      h("dt", {}, "Tipo(s) de incidente"), h("dd", {}, (d.types ?? []).length ? h("div", { class: "row" }, (d.types ?? []).map((t) => seal(TYPE_LABEL[t] ?? t, "mute"))) : h("span", { class: "muted" }, "sin marcar (check-out pendiente)"))),
+      h("dt", {}, "Tipo(s) de incidente"), h("dd", {}, (d.types ?? []).length ? h("div", { class: "row" }, (d.types ?? []).map((t) => seal(TYPE_LABEL[t] ?? t, "mute"))) : h("span", { class: "muted" }, "sin marcar (check-out pendiente)")),
+      h("dt", {}, "Herramientas de bloqueo"), h("dd", {}, (d.containmentTargets ?? []).length ? h("div", { class: "row" }, d.containmentTargets.map((t) => seal(TOOL_LABEL[t] ?? t, "mute"))) : h("span", { class: "muted" }, "sin marcar (se genera para todas por defecto)"))),
       !closed ? h("div", { class: "row" },
         h("button", { class: "btn small", onclick: editTypes }, "Marcar / editar tipos"),
+        h("button", { class: "btn small", onclick: editTargets }, "Marcar / editar herramientas de bloqueo"),
         d.status === "open" ? h("button", { class: "btn", onclick: () => setStatus("contained") }, "Marcar como contenido") : null,
         h("button", { class: "btn danger", onclick: () => setStatus("closed") }, "Cerrar incidente")) : null)),
     (d.types ?? []).length ? panel("Opciones de bloqueo según el tipo marcado", h("div", { class: "body stack" },
@@ -178,6 +196,9 @@ export async function incidentView(ctx, id) {
     suggestBox,
     !closed ? aiPanel() : null,
     panel("Plan de contención", h("div", { class: "body stack" }, h("p", { class: "muted" }, `IOCs acumulados: ${allIps.length} IP(s), ${allDomains.length} dominio(s).`),
+      h("p", { class: "muted" }, (d.containmentTargets ?? []).length
+        ? `Se generará solo para: ${d.containmentTargets.map((t) => TOOL_LABEL[t] ?? t).join(", ")}.`
+        : "Sin herramientas marcadas: se generará para todas (firewall, nginx, Cloudflare)."),
       h("button", { class: "btn primary", disabled: !allIps.length && !allDomains.length, onclick: buildContain }, "Generar reglas de bloqueo"), containBox)),
     panel("Informe", h("div", { class: "body stack" }, h("div", { class: "row" }, h("button", { class: "btn primary", onclick: () => buildReport("markdown") }, "Ver informe (Markdown)"), h("button", { class: "btn", onclick: () => buildReport("json") }, "Ver informe (JSON)"), h("a", { class: "btn", href: `/api/incidents/${id}/report?format=pdf`, target: "_blank" }, "Descargar PDF")), reportBox))) };
 }

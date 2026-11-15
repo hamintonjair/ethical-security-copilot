@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
   AssessmentCreateIn, ScopeValidateIn, ScanInitiateIn, ScanStopIn, FindingInput, ReportGenerateIn, RolePermissions, Role,
-  IncidentCreateIn, IncidentEvidenceIn, IncidentContainIn, IncidentReportIn, IncidentTypesIn,
+  IncidentCreateIn, IncidentEvidenceIn, IncidentContainIn, IncidentReportIn, IncidentTypesIn, IncidentTargetsIn,
 } from "./schemas.js";
 import { Store } from "./store.js";
 import { PolicyEngine } from "./policy.js";
@@ -192,6 +192,17 @@ export function createServer(deps: ServerDeps) {
     const ok = await store.setIncidentTypes(incidentId, types, actor, role);
     if (!ok) return json({ error: "NOT_FOUND_OR_CLOSED" }, true);
     return json({ types, guidance: Object.fromEntries(types.map((t) => [t, TYPE_GUIDANCE[t as keyof typeof TYPE_GUIDANCE]])) });
+  });
+
+  /* 8c. incident_targets_set — el humano marca qué herramientas de bloqueo ya tiene disponibles para este caso */
+  server.registerTool("incident_targets_set", {
+    description: "Marca (o reemplaza) las herramientas de bloqueo (firewall/iptables-ufw, nginx, Cloudflare) que el equipo ya tiene disponibles para este caso. Solo preselecciona el plan de contención; no aplica nada. No se debe llamar sin que el humano haya confirmado explícitamente cuáles usar.",
+    inputSchema: IncidentTargetsIn.extend({ incidentId: z.string().uuid() }).shape,
+  }, async ({ incidentId, targets }) => {
+    const d = await allowed("incident_targets_set", incidentId); if (d) return d;
+    const ok = await store.setIncidentContainmentTargets(incidentId, targets, actor, role);
+    if (!ok) return json({ error: "NOT_FOUND_OR_CLOSED" }, true);
+    return json({ containmentTargets: targets });
   });
 
   /* 9. incident_contain_plan — genera reglas; SIEMPRE para que el propio equipo las aplique en su infraestructura */

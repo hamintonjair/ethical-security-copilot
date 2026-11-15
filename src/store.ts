@@ -87,18 +87,18 @@ export class Store {
 
 
   /* ---------- Incidentes (Respuesta a Incidentes / Defensa Activa) ---------- */
-  async createIncident(input: { organization: string; contactName: string; contactEmail: string; summary: string; affectedAssets: string[]; types?: string[] }, createdBy: string) {
-    const id = randomUUID(), createdAt = new Date().toISOString(), types = input.types ?? [];
+  async createIncident(input: { organization: string; contactName: string; contactEmail: string; summary: string; affectedAssets: string[]; types?: string[]; containmentTargets?: string[] }, createdBy: string) {
+    const id = randomUUID(), createdAt = new Date().toISOString(), types = input.types ?? [], containmentTargets = input.containmentTargets ?? [];
     await this.db.query(
-      `insert into public.incidents (id, organization, contact_name, contact_email, summary, affected_assets, types, created_by, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-      [id, input.organization, input.contactName, input.contactEmail, input.summary, JSON.stringify(input.affectedAssets), types, createdBy, createdAt]);
-    await this.audit({ actor: createdBy, role: "authorizer", action: "incident:open", assessmentId: id, payload: { organization: input.organization, types } });
-    return { id, status: "open" as const, createdAt, createdBy, ...input, types };
+      `insert into public.incidents (id, organization, contact_name, contact_email, summary, affected_assets, types, containment_targets, created_by, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [id, input.organization, input.contactName, input.contactEmail, input.summary, JSON.stringify(input.affectedAssets), types, containmentTargets, createdBy, createdAt]);
+    await this.audit({ actor: createdBy, role: "authorizer", action: "incident:open", assessmentId: id, payload: { organization: input.organization, types, containmentTargets } });
+    return { id, status: "open" as const, createdAt, createdBy, ...input, types, containmentTargets };
   }
 
   private incidentRow(r: any) {
     return { id: r.id, organization: r.organization, contactName: r.contact_name, contactEmail: r.contact_email, summary: r.summary,
-      affectedAssets: r.affected_assets, types: r.types ?? [], status: r.status, createdBy: r.created_by, createdAt: iso(r.created_at), closedAt: r.closed_at ? iso(r.closed_at) : null };
+      affectedAssets: r.affected_assets, types: r.types ?? [], containmentTargets: r.containment_targets ?? [], status: r.status, createdBy: r.created_by, createdAt: iso(r.created_at), closedAt: r.closed_at ? iso(r.closed_at) : null };
   }
 
   /** El humano marca o ajusta los tipos de incidente (check-out); nunca se llama automáticamente desde la detección. */
@@ -107,6 +107,15 @@ export class Store {
     if (!cur || cur.status === "closed") return false;
     await this.db.query("update public.incidents set types=$2 where id=$1", [id, types]);
     await this.audit({ actor, role, action: "incident:types_set", assessmentId: id, payload: { types } });
+    return true;
+  }
+
+  /** El humano marca qué herramientas de bloqueo (firewall/nginx/Cloudflare) ya tiene disponibles para este caso. */
+  async setIncidentContainmentTargets(id: string, targets: string[], actor: string, role: Role): Promise<boolean> {
+    const cur = (await this.db.query("select status from public.incidents where id=$1", [id]))[0];
+    if (!cur || cur.status === "closed") return false;
+    await this.db.query("update public.incidents set containment_targets=$2 where id=$1", [id, targets]);
+    await this.audit({ actor, role, action: "incident:targets_set", assessmentId: id, payload: { targets } });
     return true;
   }
 

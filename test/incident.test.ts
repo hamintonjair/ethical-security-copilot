@@ -95,6 +95,50 @@ test("containmentRules: sin datos no genera archivos vacíos de más", () => {
   assert.deepEqual(containmentRules([], [], "all"), {});
 });
 
+test("containmentRules: acepta una lista de herramientas, no solo un valor único", () => {
+  const only = containmentRules(["203.0.113.9"], [], ["nginx"]);
+  assert.ok(only["nginx-deny.conf"]); assert.ok(!only["iptables.sh"]); assert.ok(!only["cloudflare-rule.json"]);
+  const two = containmentRules(["203.0.113.9"], ["malo.example"], ["firewall", "cloudflare"]);
+  assert.ok(two["iptables.sh"]); assert.ok(two["cloudflare-rule.json"]); assert.ok(!two["nginx-deny.conf"]);
+});
+
+test("herramientas de bloqueo del incidente: el humano las marca (check-out) vía incident_targets_set; requiere permiso de rol", async () => {
+  const store = await Store.open("memory", KEY);
+  const op = await boot("operator", store);
+  const auditor = await boot("auditor", store);
+  const { data: { incidentId } } = await op.call("incident_open", { organization: "Acme", contactName: "Ana", contactEmail: "ana@acme.test", summary: "Caso para marcar herramientas", affectedAssets: [] });
+
+  const denied = await auditor.call("incident_targets_set", { incidentId, targets: ["firewall"] });
+  assert.equal(denied.isError, true);
+
+  const ok = await op.call("incident_targets_set", { incidentId, targets: ["firewall", "nginx"] });
+  assert.equal(ok.isError, false);
+  assert.deepEqual(ok.data.containmentTargets, ["firewall", "nginx"]);
+
+  const replaced = await op.call("incident_targets_set", { incidentId, targets: ["cloudflare"] });
+  assert.equal(replaced.isError, false);
+  assert.deepEqual(replaced.data.containmentTargets, ["cloudflare"]);
+});
+
+test("herramientas de bloqueo: no se pueden marcar sobre un caso cerrado", async () => {
+  const store = await Store.open("memory", KEY);
+  const op = await boot("operator", store);
+  const { data: { incidentId } } = await op.call("incident_open", { organization: "Acme", contactName: "Ana", contactEmail: "ana@acme.test", summary: "Caso que se cerrará", affectedAssets: [] });
+  await store.setIncidentStatus(incidentId, "contained", "ana", "operator");
+  await store.setIncidentStatus(incidentId, "closed", "ana", "operator");
+  const r = await op.call("incident_targets_set", { incidentId, targets: ["firewall"] });
+  assert.equal(r.isError, true); assert.equal(r.data.error, "NOT_FOUND_OR_CLOSED");
+});
+
+test("se pueden marcar tipos y herramientas de bloqueo al abrir el caso", async () => {
+  const store = await Store.open("memory", KEY);
+  const op = await boot("operator", store);
+  const { data } = await op.call("incident_open", { organization: "Acme", contactName: "Ana", contactEmail: "ana@acme.test", summary: "Caso con tipos y herramientas desde la apertura", affectedAssets: [], types: ["phishing_email"], containmentTargets: ["nginx"] });
+  const current = await store.getIncident(data.incidentId);
+  assert.deepEqual(current?.incident.types, ["phishing_email"]);
+  assert.deepEqual(current?.incident.containmentTargets, ["nginx"]);
+});
+
 test("suggestIncidentTypes: solo sugiere, nunca decide por sí sola", () => {
   const headers = analyzeEmailHeaders(["From: Soporte Banco <soporte@banco-real.com>", "Return-Path: <x@enviador-malo.ru>", "Authentication-Results: mx.google.com; spf=fail smtp.mailfrom=enviador-malo.ru; dkim=fail; dmarc=fail"].join("\n"));
   const s = suggestIncidentTypes("email_headers", headers.patterns);

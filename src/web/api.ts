@@ -10,7 +10,7 @@ import { buildReport } from "../report.js";
 import { broadScopeProblem } from "../scope.js";
 import type { State } from "../state.js";
 import { OAuth, OAuthError } from "../oauth.js";
-import { IncidentCreateIn, IncidentEvidenceIn, IncidentContainIn, IncidentTypesIn, AiConfigIn, AiAssistIn } from "../schemas.js";
+import { IncidentCreateIn, IncidentEvidenceIn, IncidentContainIn, IncidentTypesIn, IncidentTargetsIn, AiConfigIn, AiAssistIn } from "../schemas.js";
 import { analyzeLog, analyzeEmailHeaders, containmentRules, buildIncidentReport, suggestIncidentTypes, TYPE_GUIDANCE, MAX_EVIDENCE_CHARS } from "../incident.js";
 import { runIncidentAssistant, runAssessmentAssistant, testAnthropicKey } from "../ai.js";
 import { redact } from "../redact.js";
@@ -293,6 +293,12 @@ export function createApi(ctx: ApiCtx) {
     const ok = await store.setIncidentTypes(params[0], types, s.user.username, s.user.role as any);
     if (!ok) throw new HttpError(400, "INVALID", "No se pudo guardar (¿el incidente no existe o ya está cerrado?).");
     return { types, guidance: Object.fromEntries(types.map((t) => [t, TYPE_GUIDANCE[t as keyof typeof TYPE_GUIDANCE]])) };
+  });
+  route("POST", "/api/incidents/:id/targets", CAN.incidentWork, async ({ s, params, body }) => {
+    const { targets } = IncidentTargetsIn.parse(body);
+    const ok = await store.setIncidentContainmentTargets(params[0], targets, s.user.username, s.user.role as any);
+    if (!ok) throw new HttpError(400, "INVALID", "No se pudo guardar (¿el incidente no existe o ya está cerrado?).");
+    return { containmentTargets: targets };
   });
   route("POST", "/api/incidents/:id/evidence", CAN.incidentWork, async ({ s, params, body }) => {
     const input = IncidentEvidenceIn.parse({ incidentId: params[0], ...body });
