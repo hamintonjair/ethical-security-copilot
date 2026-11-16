@@ -10,8 +10,9 @@ import { buildReport } from "../report.js";
 import { broadScopeProblem } from "../scope.js";
 import type { State } from "../state.js";
 import { OAuth, OAuthError } from "../oauth.js";
-import { IncidentCreateIn, IncidentEvidenceIn, IncidentContainIn, IncidentTypesIn, IncidentTargetsIn, AiConfigIn, AiModelsIn, AiAssistIn } from "../schemas.js";
+import { IncidentCreateIn, IncidentEvidenceIn, IncidentContainIn, IncidentTypesIn, IncidentTargetsIn, AiConfigIn, AiModelsIn, AiAssistIn, SupplyChainAnalyzeIn } from "../schemas.js";
 import { analyzeLog, analyzeEmailHeaders, containmentRules, buildIncidentReport, suggestIncidentTypes, TYPE_GUIDANCE, MAX_EVIDENCE_CHARS } from "../incident.js";
+import { parseManifest, checkVulnerabilities } from "../supplychain.js";
 import { runIncidentAssistant, runAssessmentAssistant, testApiKey, listModels, type Provider } from "../ai.js";
 import { redact } from "../redact.js";
 import { markdownToPdf } from "../pdf.js";
@@ -193,6 +194,22 @@ export function createApi(ctx: ApiCtx) {
     const r = await createFinding(store, input, s.user.username, s.user.role);
     if (!r.ok) throw new HttpError(409, r.error, r.message ?? r.error);
     return { id: r.findingId };
+  });
+
+  /* ---------- Cadena de suministro (SBOM + OSV.dev) ---------- */
+  route("POST", "/api/assessments/:id/supply-chain", CAN.findings, async ({ s, params, body }) => {
+    const rec = await mustFind(params[0]);
+    if (!rec.signatureValid) throw new HttpError(409, "SIGNATURE_INVALID", "La firma de la autorización no es válida.");
+    const input = SupplyChainAnalyzeIn.parse({ ...body, assessmentId: params[0] });
+    let sbom;
+    try { sbom = parseManifest(input.kind, input.content, input.osvEcosystem); }
+    catch (e) { throw new HttpError(400, "MANIFEST_PARSE_ERROR", (e as Error).message); }
+    let results;
+    try { results = await checkVulnerabilities(sbom); }
+    catch (e) { throw new HttpError(502, "OSV_UPSTREAM_ERROR", (e as Error).message); }
+    const vulnerable = results.filter(r => r.vulns.length);
+    await store.audit({ ...who(s), action: "supply_chain:analyzed", assessmentId: params[0], payload: { kind: input.kind, deps: sbom.length, vulnerable: vulnerable.length, via: "web" } });
+    return { dependencies: sbom.length, vulnerable: vulnerable.length, results };
   });
 
   const TRIAGE = ["unverified", "confirmed", "false_positive", "accepted_risk"];

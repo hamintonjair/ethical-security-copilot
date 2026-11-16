@@ -177,6 +177,17 @@ export const IncidentReportIn = z.object({
 });
 export const IncidentStatus = z.enum(["open", "contained", "closed"]);
 
+/* ---------- Cadena de suministro (A03) ----------
+   Análisis pasivo de manifiestos de dependencias (package-lock.json, package.json, requirements.txt o una
+   lista manual) cruzado contra OSV.dev. Nunca instala nada ni ejecuta código de ningún paquete. */
+export const ManifestKind = z.enum(["npm_package_lock", "npm_package_json", "pip_requirements", "manual"]);
+export const SupplyChainAnalyzeIn = z.object({
+  assessmentId: z.string().uuid(),
+  kind: ManifestKind,
+  content: z.string().min(1).max(2_000_000),
+  osvEcosystem: z.string().min(1).max(40).optional(), // solo para kind="manual"; p. ej. "Go", "Maven", "RubyGems", "crates.io", "Packagist", "NuGet"
+});
+
 /* ---------- Módulo de IA (API propia, dentro de la plataforma) ----------
    Actúa con los mismos permisos que RolePermissions.agent: nunca abre ni cierra un incidente.
    No tiene que ser Anthropic: también admite cualquier API compatible con OpenAI y con Gemini. */
@@ -211,9 +222,9 @@ export const AuditEntry = z.object({
 
 /* ---------- Permisos por rol ---------- */
 export const RolePermissions: Record<z.infer<typeof Role>, string[]> = {
-  authorizer: ["assessment_create", "scope_validate", "scan_stop", "incident_open", "incident_types_set", "incident_targets_set", "incident_evidence_analyze", "incident_contain_plan", "incident_report"],
-  operator:   ["scope_validate", "scan_initiate", "scan_stop", "approve_plan", "incident_open", "incident_types_set", "incident_targets_set", "incident_evidence_analyze", "incident_contain_plan", "incident_report"],
-  analyst:    ["scope_validate", "finding_create", "report_generate", "incident_types_set", "incident_targets_set", "incident_evidence_analyze", "incident_contain_plan", "incident_report"],
-  agent:      ["scope_validate", "scan_initiate", "scan_stop", "finding_create", "report_generate", "incident_types_set", "incident_targets_set", "incident_evidence_analyze", "incident_contain_plan", "incident_report"], // nunca abre el caso ni cierra el incidente: eso lo decide un humano
+  authorizer: ["assessment_create", "scope_validate", "scan_stop", "incident_open", "incident_types_set", "incident_targets_set", "incident_evidence_analyze", "incident_contain_plan", "incident_report", "supply_chain_analyze"],
+  operator:   ["scope_validate", "scan_initiate", "scan_stop", "approve_plan", "incident_open", "incident_types_set", "incident_targets_set", "incident_evidence_analyze", "incident_contain_plan", "incident_report", "supply_chain_analyze"],
+  analyst:    ["scope_validate", "finding_create", "report_generate", "incident_types_set", "incident_targets_set", "incident_evidence_analyze", "incident_contain_plan", "incident_report", "supply_chain_analyze"],
+  agent:      ["scope_validate", "scan_initiate", "scan_stop", "finding_create", "report_generate", "incident_types_set", "incident_targets_set", "incident_evidence_analyze", "incident_contain_plan", "incident_report", "supply_chain_analyze"], // nunca abre el caso ni cierra el incidente: eso lo decide un humano
   auditor:    ["audit_read", "report_generate", "incident_report"],
 };

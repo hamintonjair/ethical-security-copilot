@@ -24,7 +24,15 @@ const CONFIRM = {
   halted: "La evaluación quedará detenida y no se podrá reanudar: habrá que crear una nueva versión de la autorización.",
   closed: "Una evaluación cerrada ya no admite cambios.",
 };
-const TABS = [["resumen", "Resumen"], ["ciclo", "Ciclo de vida"], ["planes", "Planes"], ["hallazgos", "Hallazgos"], ["informe", "Informe"]];
+const TABS = [["resumen", "Resumen"], ["ciclo", "Ciclo de vida"], ["planes", "Planes"], ["hallazgos", "Hallazgos"], ["cadena", "Cadena de suministro"], ["informe", "Informe"]];
+const MANIFEST_KINDS = [
+  ["npm_package_lock", "npm — package-lock.json"],
+  ["npm_package_json", "npm — package.json"],
+  ["pip_requirements", "Python (pip) — requirements.txt"],
+  ["manual", "Otro ecosistema — lista manual \"nombre@versión\""],
+];
+const SC_SEVERITY = { critical: "Crítica", high: "Alta", medium: "Media", low: "Baja", unknown: "Sin determinar" };
+const SC_SEV_TONE = { critical: "bad", high: "bad", medium: "warn", low: "", unknown: "mute" };
 
 export async function assessmentView(ctx, id, tab = "resumen") {
   const d = await api("GET", `/api/assessments/${id}`);
@@ -33,7 +41,7 @@ export async function assessmentView(ctx, id, tab = "resumen") {
   const names = new Map([[id, d.name]]);
 
   const body = ({ resumen: () => summary(d), ciclo: () => lifecycle(ctx, d, reload), planes: () => panel(null, plansTable(d.plans, { canDecide: ctx.can("decidePlan"), nameOf: (x) => names.get(x), reload })),
-    hallazgos: () => findingsTab(ctx, d, reload), informe: () => reportTab(ctx, d) }[tab] ?? (() => summary(d)))();
+    hallazgos: () => findingsTab(ctx, d, reload), cadena: () => supplyChainTab(ctx, d, reload), informe: () => reportTab(ctx, d) }[tab] ?? (() => summary(d)))();
   const tabCount = { planes: d.plans.filter((p) => p.status === "pending_approval").length, hallazgos: d.findings.length };
 
   const node = h("div", { class: "stack" },
@@ -141,14 +149,14 @@ function aiAssistPanel(ctx, d, reload) {
     q, h("button", { class: "btn primary", onclick: ask }, "Preguntar a la IA"), out));
 }
 
-function findingForm(d, done) {
+function findingForm(d, done, prefill = {}) {
   const lines = (v) => String(v).split("\n").map((s) => s.trim()).filter(Boolean);
   const err = h("p", { class: "err", hidden: true, role: "alert" });
   let n = 0;
   const f = (label, ctl, hint) => { const id = `ff${++n}`; ctl.id = id; return h("div", { class: "field" }, h("label", { for: id }, label), ctl, hint ? h("span", { class: "hint" }, hint) : null); };
-  const T = (name, v = "", o = {}) => h("input", { type: o.type ?? "text", name, value: v, required: true, step: o.step, min: o.min, max: o.max });
-  const A = (name, rows = 3, req = true) => h("textarea", { name, rows, required: req });
-  const S = (name, o) => h("select", { name }, Object.entries(o).map(([v, l]) => h("option", { value: v }, l)));
+  const T = (name, v = "", o = {}) => h("input", { type: o.type ?? "text", name, value: prefill[name] ?? v, required: true, step: o.step, min: o.min, max: o.max });
+  const A = (name, rows = 3, req = true) => h("textarea", { name, rows, required: req }, prefill[name] ?? "");
+  const S = (name, o) => h("select", { name }, Object.entries(o).map(([v, l]) => h("option", { value: v, selected: prefill[name] === v }, l)));
   const form = h("form", { onsubmit: async (e) => {
     e.preventDefault(); err.hidden = true; const g = (k) => form.elements[k].value;
     try {
@@ -168,6 +176,59 @@ function findingForm(d, done) {
     f("Impacto de negocio", A("impact", 2)), f("Recomendación", A("reco", 2)), err,
     h("div", { class: "row" }, h("button", { type: "submit", class: "btn primary" }, "Guardar hallazgo"), h("button", { type: "button", class: "btn", onclick: () => form.remove() }, "Cancelar")));
   return panel("Nuevo hallazgo", h("div", { class: "body" }, form));
+}
+
+/* ---------- Cadena de suministro ---------- */
+function supplyChainTab(ctx, d, reload) {
+  const kind = h("select", {}, MANIFEST_KINDS.map(([v, l]) => h("option", { value: v }, l)));
+  const ecoField = h("div", { class: "field", hidden: true }, h("label", {}, "Ecosistema OSV"), h("input", { type: "text", placeholder: "Go, Maven, RubyGems, crates.io, Packagist, NuGet…" }));
+  const ecoInput = ecoField.querySelector("input");
+  kind.addEventListener("change", () => { ecoField.hidden = kind.value !== "manual"; });
+  const content = h("textarea", { rows: 8, placeholder: "Pega aquí el contenido del archivo (o, si elegiste \"lista manual\", una línea por paquete: nombre@versión)." });
+  const out = h("div", {});
+  const err = h("p", { class: "err", hidden: true, role: "alert" });
+  const analyze = async () => {
+    err.hidden = true; out.replaceChildren(h("p", { class: "muted" }, "Analizando contra OSV.dev…"));
+    try {
+      const r = await api("POST", `/api/assessments/${d.id}/supply-chain`, { kind: kind.value, content: content.value, osvEcosystem: ecoInput.value.trim() || undefined });
+      out.replaceChildren(supplyChainResults(ctx, d, r, reload));
+    } catch (e) {
+      out.replaceChildren();
+      err.textContent = e.issues?.length ? e.issues.map((i) => i.message).join(" ") : e.message; err.hidden = false;
+    }
+  };
+  return h("div", { class: "stack" },
+    panel("Analizar dependencias (SBOM + vulnerabilidades conocidas)", h("div", { class: "body stack" },
+      h("p", { class: "muted" }, "Pega el manifiesto de dependencias de tu proyecto. Se genera la lista de paquetes (SBOM) y se cruza contra OSV.dev, la base pública de vulnerabilidades conocidas. Es solo lectura: no instala ni ejecuta nada, y ningún hallazgo se guarda por sí solo."),
+      h("div", { class: "field" }, h("label", {}, "Tipo de manifiesto"), kind), ecoField,
+      h("div", { class: "field" }, h("label", {}, "Contenido"), content),
+      h("button", { class: "btn primary", onclick: analyze }, "Analizar"), err)),
+    out);
+}
+
+function supplyChainResults(ctx, d, r, reload) {
+  const canWrite = ctx.can("findings");
+  const open = ["executing", "verifying", "triage"].includes(d.state);
+  const formBox = h("div", {});
+  const rows = r.results.map((dep) => h("tr", {},
+    h("td", { class: "mono" }, dep.name), h("td", { class: "mono" }, dep.version), h("td", {}, dep.ecosystem),
+    h("td", {}, dep.vulns.length ? dep.vulns.map((v) => h("div", {}, seal(SC_SEVERITY[v.severity] ?? v.severity, SC_SEV_TONE[v.severity] ?? ""), " ", h("span", { class: "mono" }, v.id),
+      v.aliases?.length ? ` (${v.aliases.join(", ")})` : "", h("p", { class: "muted" }, v.summary))) : seal("Sin vulnerabilidades conocidas", "ok")),
+    h("td", {}, canWrite && dep.vulns.length ? h("button", { class: "btn small", disabled: !open, title: open ? "" : "Disponible cuando la evaluación ya tuvo ejecuciones", onclick: () => {
+      formBox.replaceChildren(findingForm(d, () => reload(), {
+        title: `Dependencia vulnerable: ${dep.name}@${dep.version} (${dep.vulns.map((v) => v.id).join(", ")})`,
+        asset: `${dep.ecosystem}:${dep.name}@${dep.version}`,
+        facts: dep.vulns.map((v) => `${v.id} (${SC_SEVERITY[v.severity] ?? v.severity}): ${v.summary}`).join("\n"),
+        impact: "Pendiente de evaluar según cómo se usa esta dependencia en el proyecto.",
+        reco: `Actualizar ${dep.name} a una versión que no esté afectada por ${dep.vulns.map((v) => v.id).join(", ")}.`,
+      }));
+      formBox.scrollIntoView({ block: "start" });
+    } }, "Registrar hallazgo") : null)));
+  return h("div", { class: "stack" },
+    h("p", {}, `${r.dependencies} dependencia(s) analizadas · ${r.vulnerable} con vulnerabilidades conocidas.`),
+    h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, h("th", {}, "Paquete"), h("th", {}, "Versión"), h("th", {}, "Ecosistema"), h("th", {}, "Vulnerabilidades"), h("th", {}))), h("tbody", {}, rows))),
+    formBox,
+    canWrite && !open ? h("p", { class: "hint" }, "Se pueden registrar hallazgos cuando la evaluación ya tuvo ejecuciones (estado «En ejecución» o posterior). El título, el activo, los hechos y la recomendación ya vienen prellenados: solo falta elegir la severidad y el puntaje CVSS correctos.") : null);
 }
 
 /* ---------- Informe ---------- */

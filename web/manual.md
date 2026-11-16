@@ -142,6 +142,16 @@ Hasta ahora, la única forma de que un modelo de IA razone sobre tus casos era c
 - **Auditoría**: cada acción que dispara el asistente queda en el mismo registro encadenado, con el actor `ia-modulo:<usuario que preguntó>`, para distinguirla de lo hecho por MCP o a mano.
 - **Costo**: las llamadas a la API del proveedor elegido las paga la cuenta dueña de la llave que configuraste; la plataforma no añade ningún cargo propio.
 
+## 8bis. Cadena de suministro: SBOM y vulnerabilidades conocidas (A03)
+
+Dentro de cada evaluación, en la pestaña **Cadena de suministro**, puedes analizar las dependencias de un proyecto sin que la herramienta instale ni ejecute nada: solo lee el texto del manifiesto que le pegas y lo cruza contra [OSV.dev](https://osv.dev), la base pública de vulnerabilidades conocidas (incluye CVE y avisos de GitHub).
+
+- **Qué formatos acepta**: `package-lock.json` (npm, lockfileVersion 1-3), `package.json` (limpia los rangos `^`/`~`), `requirements.txt` (Python/pip, requiere `==`), o una **lista manual** `nombre@versión` (una línea por paquete) con el ecosistema que elijas — así cubre cualquier otro lenguaje (Go, Java/Maven, Ruby, Rust, PHP, .NET…) aunque no tenga un parser dedicado.
+- **Qué genera**: la lista de paquetes (SBOM) con su versión y ecosistema, y para cada uno las vulnerabilidades conocidas que le correspondan: su identificador (CVE/GHSA/OSV), un resumen y una severidad aproximada.
+- **Qué NO hace**: no instala paquetes, no ejecuta código de ninguna dependencia, no toca la infraestructura de la organización, y **no registra ningún hallazgo por sí solo** — el botón *Registrar hallazgo* junto a cada dependencia vulnerable solo prellena el formulario de hallazgo (título, activo, hechos, recomendación) para que tú elijas la severidad y el puntaje CVSS y lo confirmes.
+- **Quién puede usarlo**: autorizador, operador, analista, y el agente de IA por MCP o por el módulo de IA interno (con los mismos límites de siempre: nunca abre ni cierra nada por su cuenta).
+- **Auditoría**: cada análisis queda registrado (`supply_chain:analyzed`) con cuántas dependencias se revisaron y cuántas resultaron vulnerables — el contenido del manifiesto no se guarda.
+
 ## 9. Mapa de cobertura: del ataque a la defensa
 
 La herramienta **no ataca**: encuentra las condiciones que los atacantes aprovechan y te dice cómo cerrarlas.
@@ -152,7 +162,7 @@ La herramienta **no ataca**: encuentra las condiciones que los atacantes aprovec
 | Fallos criptográficos (A04) | Auditoría TLS, análisis de configuración | TLS 1.2+/1.3, certificados vigentes, HSTS, no guardar secretos en texto claro |
 | Fallos de autenticación y sesión (A07) | Cookies (Secure/HttpOnly/SameSite) | MFA, contraseñas largas, bloqueo de intentos, cookies seguras |
 | Suplantación y phishing (ATT&CK T1566) | SPF, DKIM, DMARC, MTA-STS | DMARC en `reject`, SPF con `-all`, formación de usuarios |
-| Cadena de suministro (A03) | *Próximo lote* (dependencias y SBOM) | Fijar versiones, revisar dependencias, firmar artefactos |
+| Cadena de suministro (A03) | SBOM + cruce con vulnerabilidades conocidas (ver §8bis) | Fijar versiones, revisar dependencias, firmar artefactos |
 | Inyección y XSS (A05, CWE-79, CWE-89) | Solo defensas indirectas (CSP, cabeceras) | Consultas parametrizadas, escape de salida, CSP; pruebas en laboratorio con permiso |
 | Registro y alertas (A09) | *Próximo lote* (análisis de logs) | Registrar eventos de seguridad y alertar |
 | API: autorización a nivel de objeto/función (API1, API5) | No se prueba de forma automática | Revisión de código, pruebas con cuentas de prueba autorizadas |

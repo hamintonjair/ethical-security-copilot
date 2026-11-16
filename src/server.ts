@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   AssessmentCreateIn, ScopeValidateIn, ScanInitiateIn, ScanStopIn, FindingInput, ReportGenerateIn, RolePermissions, Role,
   IncidentCreateIn, IncidentEvidenceIn, IncidentContainIn, IncidentReportIn, IncidentTypesIn, IncidentTargetsIn,
+  SupplyChainAnalyzeIn,
 } from "./schemas.js";
 import { Store } from "./store.js";
 import { PolicyEngine } from "./policy.js";
@@ -15,6 +16,7 @@ import type { State } from "./state.js";
 import { createFinding } from "./findings.js";
 import { buildReport } from "./report.js";
 import { analyzeLog, analyzeEmailHeaders, containmentRules, buildIncidentReport, suggestIncidentTypes, TYPE_GUIDANCE, MAX_EVIDENCE_CHARS } from "./incident.js";
+import { parseManifest, checkVulnerabilities, MAX_MANIFEST_CHARS } from "./supplychain.js";
 
 type RoleT = z.infer<typeof Role>;
 const json = (o: unknown, isError = false) => ({ content: [{ type: "text" as const, text: JSON.stringify(o, null, 2) }], ...(isError ? { isError: true } : {}) });
@@ -228,6 +230,26 @@ export function createServer(deps: ServerDeps) {
     if (!rec) return json({ error: "INCIDENT_NOT_FOUND" }, true);
     const text = buildIncidentReport(rec.incident, rec.evidence, format);
     return { content: [{ type: "text" as const, text }] };
+  });
+
+  /* 11. supply_chain_analyze — analiza manifiestos de dependencias (SBOM) y los cruza con OSV.dev; nunca instala ni ejecuta nada */
+  server.registerTool("supply_chain_analyze", {
+    description: "Analiza un manifiesto de dependencias que el usuario pega (package-lock.json, package.json, requirements.txt, o una lista manual 'nombre@versión') y lo cruza con OSV.dev para detectar vulnerabilidades conocidas (A03). Solo lee el texto dado; no instala ni ejecuta nada.",
+    inputSchema: SupplyChainAnalyzeIn.shape,
+  }, async ({ assessmentId, kind, content, osvEcosystem }) => {
+    const d = await allowed("supply_chain_analyze", assessmentId); if (d) return d;
+    if (content.length > MAX_MANIFEST_CHARS) return json({ error: "CONTENT_TOO_LARGE", message: `Máximo ${MAX_MANIFEST_CHARS} caracteres.` }, true);
+    const rec = await store.getAssessment(assessmentId);
+    if (!rec || !rec.signatureValid) return json({ error: "NO_ACTIVE_ASSESSMENT" }, true);
+    let sbom;
+    try { sbom = parseManifest(kind, content, osvEcosystem); }
+    catch (e) { return json({ error: "MANIFEST_PARSE_ERROR", message: (e as Error).message }, true); }
+    let results;
+    try { results = await checkVulnerabilities(sbom); }
+    catch (e) { return json({ error: "OSV_UPSTREAM_ERROR", message: (e as Error).message }, true); }
+    const vulnerable = results.filter(r => r.vulns.length);
+    await store.audit({ actor, role, action: "supply_chain:analyzed", assessmentId, payload: { kind, deps: sbom.length, vulnerable: vulnerable.length } });
+    return json({ dependencies: sbom.length, vulnerable: vulnerable.length, results, note: "Es solo informativo: nada se registra como hallazgo automáticamente. Usa finding_create para los que decidas confirmar." });
   });
 
   return { server, policy, store };
