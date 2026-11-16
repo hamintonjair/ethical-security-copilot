@@ -91,7 +91,7 @@ Una vez marcado un tipo (manual o aceptando la sugerencia), el caso muestra su g
 
 ## Módulo de IA por API (además de MCP)
 
-Segunda forma de conectar un modelo de IA, integrada en la propia consola, sin necesitar un cliente MCP aparte. Un autorizador guarda su llave de Anthropic en *Configuración → Integración IA* (se cifra con AES-256-GCM, nunca se devuelve ni se registra). Desde ahí, el panel *Asistente de IA* de cada incidente deja pedirle a la IA que analice la evidencia, genere el plan de contención o el informe, en lenguaje natural.
+Segunda forma de conectar un modelo de IA, integrada en la propia consola, sin necesitar un cliente MCP aparte. No tiene que ser Anthropic: en *Configuración → Integración IA* un autorizador elige el **proveedor** (Anthropic/Claude, cualquier API **compatible con OpenAI** —OpenAI, Azure OpenAI, un proxy propio, etc., con URL base configurable— o **Google Gemini**), pega su llave y pulsa "Cargar modelos" para elegir el modelo de una lista real obtenida en vivo de esa API (con respaldo para escribir el id a mano si la carga falla). La llave se cifra con AES-256-GCM y nunca se devuelve ni se registra. Los campos de proveedor/URL/llave/modelo solo aparecen una vez marcado "Activar el módulo de IA". Desde ahí, el panel *Asistente de IA* de cada incidente deja pedirle a la IA que analice la evidencia, genere el plan de contención o el informe, en lenguaje natural — con el mismo ciclo de herramientas sea cual sea el proveedor elegido.
 
 Disponible en dos lugares, con el mismo panel *Asistente de IA*:
 - **Incidentes**: analizar evidencia, generar el plan de contención y el informe (`incident_evidence_analyze`, `incident_contain_plan`, `incident_report`). Nunca abre ni cierra un incidente.

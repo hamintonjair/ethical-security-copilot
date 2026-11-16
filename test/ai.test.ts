@@ -6,7 +6,7 @@ import { Store } from "../src/store.js";
 import { Auth } from "../src/web/auth.js";
 import { createHttpApp } from "../src/http.js";
 import { encryptSecret, decryptSecret } from "../src/crypto.js";
-import { runIncidentAssistant, runAssessmentAssistant } from "../src/ai.js";
+import { runIncidentAssistant, runAssessmentAssistant, listModels, testApiKey } from "../src/ai.js";
 
 const assessmentInput = (over: Record<string, unknown> = {}) => ({
   name: "Evaluación de prueba IA",
@@ -87,7 +87,7 @@ test("IA: la configuración solo la toca un authorizer; la llave nunca se devuel
 
   const secret = await store.getAiSecret(); // sigue deshabilitado (enabled:false) => null
   assert.equal(secret, null);
-  await store.setAiConfig({ enabled: true, model: "otro-modelo" }, "ana");
+  await store.setAiConfig({ enabled: true, provider: "anthropic", model: "otro-modelo" }, "ana");
   const secret2 = await store.getAiSecret();
   assert.equal(secret2?.apiKey, "sk-ant-0123456789");
 });
@@ -104,7 +104,7 @@ test("IA: ai-assist exige que el módulo esté configurado", async () => {
 
 test("IA: el asistente ejecuta solo herramientas ya permitidas para el rol 'agent' y deja todo en la auditoría", async () => {
   const freshStore = await Store.open("memory", KEY);
-  await freshStore.setAiConfig({ enabled: true, model: "claude-test", apiKey: "sk-ant-test-key" }, "ana");
+  await freshStore.setAiConfig({ enabled: true, provider: "anthropic", model: "claude-test", apiKey: "sk-ant-test-key" }, "ana");
   const inc = await freshStore.createIncident({ organization: "Org", contactName: "A", contactEmail: "a@demo.test", summary: "ataque en curso", affectedAssets: [] }, "ana");
   await freshStore.addIncidentEvidence(inc.id, { kind: "log", description: "log sospechoso", redactedContent: "GET /etc/passwd", iocs: { ips: ["203.0.113.9"], domains: [], urls: [], hashes: [], emails: [] } }, "ana");
 
@@ -138,7 +138,7 @@ test("IA: el asistente ejecuta solo herramientas ya permitidas para el rol 'agen
 
 test("IA en Evaluaciones: puede registrar un hallazgo y redactar un informe, nunca lanza un módulo", async () => {
   const freshStore = await Store.open("memory", KEY);
-  await freshStore.setAiConfig({ enabled: true, model: "claude-test", apiKey: "sk-ant-test-key" }, "ana");
+  await freshStore.setAiConfig({ enabled: true, provider: "anthropic", model: "claude-test", apiKey: "sk-ant-test-key" }, "ana");
   const a = await freshStore.createAssessment(assessmentInput(), "ana");
   for (const s of ["scope_validated", "planned", "approved", "executing"] as const) await freshStore.transition(a.id, s, "ana", "authorizer");
 
@@ -175,5 +175,98 @@ test("IA en Evaluaciones: puede registrar un hallazgo y redactar un informe, nun
   assert.equal(entry?.actor, "ia-modulo:omar");
   assert.equal(entry?.role, "agent");
 
+  await freshStore.close();
+});
+
+/* =========================== Multi-proveedor: no tiene que ser Anthropic =========================== */
+
+test("listModels: Anthropic — llama a /models con x-api-key y devuelve id+label", async () => {
+  const fetchImpl = (async (url: any, opts: any) => {
+    assert.match(String(url), /\/v1\/models\?limit=100$/);
+    assert.equal(opts.headers["x-api-key"], "sk-ant-x");
+    return new Response(JSON.stringify({ data: [{ id: "claude-sonnet-5-5", display_name: "Claude Sonnet 5.5" }] }), { status: 200 });
+  }) as typeof fetch;
+  const models = await listModels("anthropic", "sk-ant-x", undefined, fetchImpl);
+  assert.deepEqual(models, [{ id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5" }]);
+});
+
+test("listModels: OpenAI (o compatible) — usa Authorization Bearer y una URL base propia", async () => {
+  const fetchImpl = (async (url: any, opts: any) => {
+    assert.equal(String(url), "https://mi-proxy.example.com/v1/models");
+    assert.equal(opts.headers.Authorization, "Bearer sk-oa-x");
+    return new Response(JSON.stringify({ data: [{ id: "gpt-4o-mini" }, { id: "gpt-4o" }] }), { status: 200 });
+  }) as typeof fetch;
+  const models = await listModels("openai", "sk-oa-x", "https://mi-proxy.example.com/v1", fetchImpl);
+  assert.deepEqual(models, [{ id: "gpt-4o", label: "gpt-4o" }, { id: "gpt-4o-mini", label: "gpt-4o-mini" }]);
+});
+
+test("listModels: Gemini — pasa la llave como query param y filtra por generateContent", async () => {
+  const fetchImpl = (async (url: any) => {
+    assert.match(String(url), /generativelanguage\.googleapis\.com\/v1beta\/models\?key=sk-gem-x/);
+    return new Response(JSON.stringify({ models: [
+      { name: "models/gemini-2.5-pro", displayName: "Gemini 2.5 Pro", supportedGenerationMethods: ["generateContent"] },
+      { name: "models/embedding-001", displayName: "Embedding", supportedGenerationMethods: ["embedContent"] },
+    ] }), { status: 200 });
+  }) as typeof fetch;
+  const models = await listModels("gemini", "sk-gem-x", undefined, fetchImpl);
+  assert.deepEqual(models, [{ id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" }]);
+});
+
+test("testApiKey: una llave inválida (401) se reporta como tal, sin importar el proveedor", async () => {
+  const fetchImpl = (async () => new Response("no", { status: 401 })) as typeof fetch;
+  const r = await testApiKey("openai", "sk-mala", undefined, fetchImpl);
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.match(r.message, /no es válida/);
+});
+
+test("módulo de IA (Incidentes) también funciona con un proveedor compatible con OpenAI, no solo Anthropic", async () => {
+  const freshStore = await Store.open("memory", KEY);
+  await freshStore.setAiConfig({ enabled: true, provider: "openai", model: "gpt-4o-mini", baseUrl: "https://mi-proxy.example.com/v1", apiKey: "sk-oa-test" }, "ana");
+  const inc = await freshStore.createIncident({ organization: "Org", contactName: "A", contactEmail: "a@demo.test", summary: "ataque en curso", affectedAssets: [] }, "ana");
+
+  let call = 0;
+  const fetchImpl = (async (url: any, opts: any) => {
+    call++;
+    assert.equal(String(url), "https://mi-proxy.example.com/v1/chat/completions");
+    assert.equal(opts.headers.Authorization, "Bearer sk-oa-test");
+    if (call === 1) {
+      return new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: null,
+        tool_calls: [{ id: "c1", function: { name: "incident_contain_plan", arguments: JSON.stringify({ ips: ["203.0.113.9"], domains: [], targets: "all" }) } }] } }] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ choices: [{ message: { role: "assistant", content: "Listo: bloquea esa IP." } }] }), { status: 200 });
+  }) as typeof fetch;
+
+  const r = await runIncidentAssistant({ store: freshStore, incidentId: inc.id, question: "genera el plan de contención", requestedBy: "omar", fetchImpl });
+  assert.ok(!("error" in r), JSON.stringify(r));
+  if ("error" in r) throw new Error("unreachable");
+  assert.match(r.answer, /bloquea/);
+  assert.equal(r.actions.length, 1);
+  assert.equal(r.actions[0].tool, "incident_contain_plan");
+  await freshStore.close();
+});
+
+test("módulo de IA (Incidentes) también funciona con Gemini", async () => {
+  const freshStore = await Store.open("memory", KEY);
+  await freshStore.setAiConfig({ enabled: true, provider: "gemini", model: "gemini-2.5-pro", apiKey: "sk-gem-test" }, "ana");
+  const inc = await freshStore.createIncident({ organization: "Org", contactName: "A", contactEmail: "a@demo.test", summary: "ataque en curso", affectedAssets: [] }, "ana");
+
+  let call = 0;
+  const fetchImpl = (async (url: any) => {
+    call++;
+    assert.match(String(url), /:generateContent\?key=sk-gem-test$/);
+    if (call === 1) {
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [
+        { functionCall: { name: "incident_contain_plan", args: { ips: ["203.0.113.9"], domains: [], targets: "all" } } },
+      ] } }] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "Listo: bloquea esa IP." }] } }] }), { status: 200 });
+  }) as typeof fetch;
+
+  const r = await runIncidentAssistant({ store: freshStore, incidentId: inc.id, question: "genera el plan de contención", requestedBy: "omar", fetchImpl });
+  assert.ok(!("error" in r), JSON.stringify(r));
+  if ("error" in r) throw new Error("unreachable");
+  assert.match(r.answer, /bloquea/);
+  assert.equal(r.actions.length, 1);
+  assert.equal(r.actions[0].tool, "incident_contain_plan");
   await freshStore.close();
 });

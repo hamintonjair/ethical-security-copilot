@@ -8,13 +8,20 @@ import { createFinding } from "./findings.js";
 import { buildReport } from "./report.js";
 import { redact } from "./redact.js";
 
-const API_URL = "https://api.anthropic.com/v1/messages";
+export type Provider = "anthropic" | "openai" | "gemini";
 const MAX_ITERS = 4;
 const MAX_TOKENS = 1500;
+const DEFAULT_BASE: Record<Provider, string> = {
+  anthropic: "https://api.anthropic.com/v1",
+  openai: "https://api.openai.com/v1",
+  gemini: "https://generativelanguage.googleapis.com/v1beta",
+};
+const baseOf = (provider: Provider, baseUrl?: string | null) => (baseUrl || DEFAULT_BASE[provider]).replace(/\/+$/, "");
 
 export type FetchFn = typeof fetch;
 export interface AiAction { tool: string; input: Record<string, unknown>; result: unknown }
 export type AiResult = { answer: string; actions: AiAction[] } | { error: string; message: string };
+export interface ModelInfo { id: string; label: string }
 
 type ToolUseBlock = { type: "tool_use"; id: string; name: string; input: Record<string, unknown> };
 type TextBlock = { type: "text"; text: string };
@@ -23,28 +30,53 @@ type ToolDef = { name: string; description: string; input_schema: Record<string,
 /** El actor que queda en la auditoría deja explícito que fue el módulo de IA, a petición de qué humano. */
 export const aiActor = (human: string) => `ia-modulo:${human}`;
 
-export async function testAnthropicKey(apiKey: string, model: string, fetchImpl: FetchFn = fetch): Promise<{ ok: true } | { ok: false; message: string }> {
-  try {
-    const res = await fetchImpl(API_URL, {
-      method: "POST",
-      headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({ model, max_tokens: 8, messages: [{ role: "user", content: "di 'ok'" }] }),
-    });
-    if (res.ok) return { ok: true };
-    const body = await res.text();
-    return { ok: false, message: res.status === 401 ? "La llave de API no es válida." : `Anthropic respondió ${res.status}: ${body.slice(0, 200)}` };
-  } catch (e) { return { ok: false, message: `No se pudo contactar a Anthropic: ${(e as Error).message}` }; }
+/** Lista los modelos reales disponibles con esa llave, para que el humano elija de una lista en vez de escribir el nombre a mano. */
+export async function listModels(provider: Provider, apiKey: string, baseUrl: string | undefined, fetchImpl: FetchFn = fetch): Promise<ModelInfo[]> {
+  const base = baseOf(provider, baseUrl);
+  if (provider === "anthropic") {
+    const res = await fetchImpl(`${base}/models?limit=100`, { headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" } });
+    if (!res.ok) throw new Error(res.status === 401 ? "La llave de API no es válida." : `Anthropic respondió ${res.status}.`);
+    const data = await res.json() as { data: Array<{ id: string; display_name?: string }> };
+    return data.data.map((m) => ({ id: m.id, label: m.display_name || m.id }));
+  }
+  if (provider === "openai") {
+    const res = await fetchImpl(`${base}/models`, { headers: { Authorization: `Bearer ${apiKey}` } });
+    if (!res.ok) throw new Error(res.status === 401 ? "La llave de API no es válida." : `La API respondió ${res.status}.`);
+    const data = await res.json() as { data: Array<{ id: string }> };
+    return data.data.map((m) => ({ id: m.id, label: m.id })).sort((a, b) => a.id.localeCompare(b.id));
+  }
+  // gemini
+  const res = await fetchImpl(`${base}/models?key=${encodeURIComponent(apiKey)}&pageSize=200`);
+  if (!res.ok) throw new Error(res.status === 401 || res.status === 403 ? "La llave de API no es válida." : `Gemini respondió ${res.status}.`);
+  const data = await res.json() as { models?: Array<{ name: string; displayName?: string; supportedGenerationMethods?: string[] }> };
+  return (data.models ?? [])
+    .filter((m) => !m.supportedGenerationMethods || m.supportedGenerationMethods.includes("generateContent"))
+    .map((m) => ({ id: m.name.replace(/^models\//, ""), label: m.displayName || m.name }));
 }
 
-/** Bucle genérico de uso de herramientas con Anthropic. Mismo código para el asistente de Incidentes y el de Evaluaciones. */
-async function runAssistant(opts: {
-  apiKey: string; model: string; system: string; question: string; tools: ToolDef[];
+export async function testApiKey(provider: Provider, apiKey: string, baseUrl: string | undefined, fetchImpl: FetchFn = fetch): Promise<{ ok: true } | { ok: false; message: string }> {
+  try { await listModels(provider, apiKey, baseUrl, fetchImpl); return { ok: true }; }
+  catch (e) { return { ok: false, message: (e as Error).message || "No se pudo contactar a la API." }; }
+}
+
+type RunOpts = {
+  provider: Provider; apiKey: string; model: string; baseUrl?: string | null; system: string; question: string; tools: ToolDef[];
   execTool: (name: string, input: Record<string, unknown>) => Promise<unknown>; fetchImpl: FetchFn;
-}): Promise<AiResult> {
+};
+
+/** Bucle de uso de herramientas. Mismo contrato (execTool) para los tres proveedores y para los dos asistentes (Incidentes y Evaluaciones). */
+async function runAssistant(opts: RunOpts): Promise<AiResult> {
+  if (opts.provider === "openai") return runOpenAiLoop(opts);
+  if (opts.provider === "gemini") return runGeminiLoop(opts);
+  return runAnthropicLoop(opts);
+}
+
+async function runAnthropicLoop(opts: RunOpts): Promise<AiResult> {
+  const url = `${baseOf("anthropic", opts.baseUrl)}/messages`;
   const messages: Array<{ role: "user" | "assistant"; content: unknown }> = [{ role: "user", content: opts.question.slice(0, 4000) }];
   const actions: AiAction[] = [];
   for (let i = 0; i < MAX_ITERS; i++) {
-    const res = await opts.fetchImpl(API_URL, {
+    const res = await opts.fetchImpl(url, {
       method: "POST",
       headers: { "x-api-key": opts.apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
       body: JSON.stringify({ model: opts.model, max_tokens: MAX_TOKENS, system: opts.system, messages, tools: opts.tools }),
@@ -52,7 +84,7 @@ async function runAssistant(opts: {
     if (!res.ok) return { error: "AI_UPSTREAM_ERROR", message: `Anthropic respondió ${res.status}.` };
     const data = await res.json() as { content: Array<TextBlock | ToolUseBlock>; stop_reason: string };
     const toolUses = data.content.filter((b): b is ToolUseBlock => b.type === "tool_use");
-    const text = data.content.filter((b): b is TextBlock => b.type === "text").map(b => b.text).join("\n").trim();
+    const text = data.content.filter((b): b is TextBlock => b.type === "text").map((b) => b.text).join("\n").trim();
     if (!toolUses.length || data.stop_reason !== "tool_use") return { answer: text || "(sin respuesta)", actions };
 
     messages.push({ role: "assistant", content: data.content });
@@ -63,6 +95,69 @@ async function runAssistant(opts: {
       toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(result).slice(0, 8000) });
     }
     messages.push({ role: "user", content: toolResults });
+  }
+  return { answer: "Se alcanzó el límite de pasos con las herramientas; revisa las acciones ya generadas abajo.", actions };
+}
+
+async function runOpenAiLoop(opts: RunOpts): Promise<AiResult> {
+  const url = `${baseOf("openai", opts.baseUrl)}/chat/completions`;
+  type Msg = { role: string; content: string | null; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>; tool_call_id?: string };
+  const messages: Msg[] = [{ role: "system", content: opts.system }, { role: "user", content: opts.question.slice(0, 4000) }];
+  const actions: AiAction[] = [];
+  const tools = opts.tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.input_schema } }));
+  for (let i = 0; i < MAX_ITERS; i++) {
+    const res = await opts.fetchImpl(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${opts.apiKey}`, "content-type": "application/json" },
+      body: JSON.stringify({ model: opts.model, max_tokens: MAX_TOKENS, messages, tools, tool_choice: "auto" }),
+    });
+    if (!res.ok) return { error: "AI_UPSTREAM_ERROR", message: `La API respondió ${res.status}.` };
+    const data = await res.json() as { choices?: Array<{ message: Msg }> };
+    const msg = data.choices?.[0]?.message;
+    if (!msg) return { error: "AI_UPSTREAM_ERROR", message: "Respuesta vacía de la API." };
+    const toolCalls = msg.tool_calls ?? [];
+    if (!toolCalls.length) return { answer: (msg.content || "(sin respuesta)").trim(), actions };
+
+    messages.push({ role: "assistant", content: msg.content ?? null, tool_calls: toolCalls });
+    for (const tc of toolCalls) {
+      let input: Record<string, unknown> = {};
+      try { input = JSON.parse(tc.function.arguments || "{}"); } catch { /* argumentos no parseables: se trata como vacío */ }
+      const result = await opts.execTool(tc.function.name, input);
+      actions.push({ tool: tc.function.name, input, result });
+      messages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(result).slice(0, 8000) });
+    }
+  }
+  return { answer: "Se alcanzó el límite de pasos con las herramientas; revisa las acciones ya generadas abajo.", actions };
+}
+
+async function runGeminiLoop(opts: RunOpts): Promise<AiResult> {
+  const url = `${baseOf("gemini", opts.baseUrl)}/models/${encodeURIComponent(opts.model)}:generateContent?key=${encodeURIComponent(opts.apiKey)}`;
+  type Part = { text?: string; functionCall?: { name: string; args?: Record<string, unknown> }; functionResponse?: { name: string; response: unknown } };
+  const contents: Array<{ role: string; parts: Part[] }> = [{ role: "user", parts: [{ text: opts.question.slice(0, 4000) }] }];
+  const actions: AiAction[] = [];
+  const tools = [{ functionDeclarations: opts.tools.map((t) => ({ name: t.name, description: t.description, parameters: t.input_schema })) }];
+  for (let i = 0; i < MAX_ITERS; i++) {
+    const res = await opts.fetchImpl(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ system_instruction: { parts: [{ text: opts.system }] }, contents, tools, generationConfig: { maxOutputTokens: MAX_TOKENS } }),
+    });
+    if (!res.ok) return { error: "AI_UPSTREAM_ERROR", message: `Gemini respondió ${res.status}.` };
+    const data = await res.json() as { candidates?: Array<{ content: { parts: Part[] } }> };
+    const parts = data.candidates?.[0]?.content?.parts ?? [];
+    const calls = parts.filter((p) => p.functionCall);
+    const text = parts.filter((p) => p.text).map((p) => p.text).join("\n").trim();
+    if (!calls.length) return { answer: text || "(sin respuesta)", actions };
+
+    contents.push({ role: "model", parts });
+    const responseParts: Part[] = [];
+    for (const c of calls) {
+      const name = c.functionCall!.name, args = c.functionCall!.args ?? {};
+      const result = await opts.execTool(name, args);
+      actions.push({ tool: name, input: args, result });
+      responseParts.push({ functionResponse: { name, response: { result } } });
+    }
+    contents.push({ role: "function", parts: responseParts });
   }
   return { answer: "Se alcanzó el límite de pasos con las herramientas; revisa las acciones ya generadas abajo.", actions };
 }
@@ -174,7 +269,7 @@ export async function runIncidentAssistant(opts: {
     return { error: `herramienta desconocida: ${name}` };
   };
 
-  return runAssistant({ apiKey: secret.apiKey, model: secret.model, system, question, tools: INCIDENT_TOOLS, execTool, fetchImpl });
+  return runAssistant({ provider: secret.provider as Provider, apiKey: secret.apiKey, model: secret.model, baseUrl: secret.baseUrl, system, question, tools: INCIDENT_TOOLS, execTool, fetchImpl });
 }
 
 /* =========================== Evaluaciones ===========================
@@ -246,5 +341,5 @@ export async function runAssessmentAssistant(opts: {
     return { error: `herramienta desconocida: ${name}` };
   };
 
-  return runAssistant({ apiKey: secret.apiKey, model: secret.model, system, question, tools: ASSESSMENT_TOOLS, execTool, fetchImpl });
+  return runAssistant({ provider: secret.provider as Provider, apiKey: secret.apiKey, model: secret.model, baseUrl: secret.baseUrl, system, question, tools: ASSESSMENT_TOOLS, execTool, fetchImpl });
 }

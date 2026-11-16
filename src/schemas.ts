@@ -178,11 +178,20 @@ export const IncidentReportIn = z.object({
 export const IncidentStatus = z.enum(["open", "contained", "closed"]);
 
 /* ---------- Módulo de IA (API propia, dentro de la plataforma) ----------
-   Actúa con los mismos permisos que RolePermissions.agent: nunca abre ni cierra un incidente. */
+   Actúa con los mismos permisos que RolePermissions.agent: nunca abre ni cierra un incidente.
+   No tiene que ser Anthropic: también admite cualquier API compatible con OpenAI y con Gemini. */
+export const AiProvider = z.enum(["anthropic", "openai", "gemini"]);
 export const AiConfigIn = z.object({
   enabled: z.boolean(),
-  model: z.string().min(1).max(100),
+  provider: AiProvider.default("anthropic"),
+  model: z.string().min(1).max(200),
+  baseUrl: z.string().url().max(300).optional(), // en blanco => URL oficial del proveedor
   apiKey: z.string().min(10).max(300).optional(), // omitido => conserva la llave ya guardada
+});
+export const AiModelsIn = z.object({
+  provider: AiProvider.optional(), // omitido => el del proveedor ya guardado
+  apiKey: z.string().min(10).max(300).optional(), // omitido => usa la llave ya guardada
+  baseUrl: z.string().url().max(300).optional(),
 });
 export const AiAssistIn = z.object({ question: z.string().min(1).max(4000) });
 

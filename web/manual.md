@@ -126,16 +126,21 @@ Todos son de solo lectura o de impacto mínimo. Ninguno explota vulnerabilidades
 
 ## 8. Módulo de IA dentro de la plataforma (además de MCP)
 
-Hasta ahora, la única forma de que un modelo de IA razone sobre tus casos era conectar Claude por MCP desde tu propia cuenta. Esta sección añade una **segunda forma, por API**, integrada en la propia consola: tú guardas tu llave de Anthropic una sola vez y la plataforma la usa para ayudarte, sin que tengas que abrir Claude aparte.
+Hasta ahora, la única forma de que un modelo de IA razone sobre tus casos era conectar Claude por MCP desde tu propia cuenta. Esta sección añade una **segunda forma, por API**, integrada en la propia consola: tú guardas tu llave una sola vez y la plataforma la usa para ayudarte, sin que tengas que abrir Claude aparte. **No tiene que ser Anthropic**: funciona igual con cualquier API compatible con OpenAI o con Google Gemini.
 
-- **Dónde se configura**: *Configuración → Integración IA* (solo un autorizador). Se guarda cifrada (AES-256-GCM) con una llave derivada de `ESC_SIGNING_KEY`; nunca se devuelve ni se muestra completa, solo sus últimos 4 caracteres. El botón *Probar conexión* comprueba que la llave funciona sin exponerla.
+- **Dónde se configura**: *Configuración → Integración IA* (solo un autorizador). Los campos de configuración solo aparecen después de marcar la casilla "Activar el módulo de IA".
+  - **Proveedor**: elige entre *Anthropic (Claude)*, *Compatible con OpenAI* (OpenAI, Azure OpenAI, o cualquier endpoint propio que hable el mismo protocolo) o *Google Gemini*.
+  - **URL base (opcional)**: déjala en blanco para usar la URL oficial del proveedor elegido; solo se cambia si usas un proxy o un endpoint propio.
+  - **Llave de API**: se guarda cifrada (AES-256-GCM) con una llave derivada de `ESC_SIGNING_KEY`; nunca se devuelve ni se muestra completa, solo sus últimos 4 caracteres.
+  - **Modelo**: pulsa *Cargar modelos* con la llave puesta para traer la lista real de modelos disponibles de esa cuenta/API y elegir uno del desplegable — ya no se escribe el nombre a mano. Si la carga falla (llave inválida, sin conexión), aparece el motivo y un botón *Escribir el id a mano* como respaldo.
+  - El botón *Probar conexión* comprueba que la llave funciona con el proveedor y la URL elegidos, sin exponerla.
 - **Dónde se usa**:
   - **Incidentes** → panel *Asistente de IA* en cada caso. Le escribes lo que necesitas («revisa la evidencia y dime qué hacer», «genera el plan de contención») y responde en lenguaje natural; puede analizar evidencia, generar reglas de contención, generar el informe, y marcar el tipo de incidente o las herramientas de bloqueo disponibles (las mismas herramientas que ya tenía el agente por MCP, incluidas `incident_types_set` e `incident_targets_set`) — pero nunca marca nada sin que tú se lo confirmes explícitamente en la conversación.
   - **Evaluaciones** → pestaña *Hallazgos*, mismo panel. Le pides que revise los hallazgos, registre uno nuevo o redacte un borrador del informe. **No incluye lanzar módulos**: ejecutar algo contra una red real sigue necesitando siempre un plan aprobado por un humano, por MCP o por la consola.
 - **Mismos límites que el rol `agent` de siempre**: en cada sesión, el asistente solo puede usar las herramientas que `RolePermissions.agent` ya tenía permitidas por MCP. **Nunca** puede abrir/cerrar un incidente ni aprobar un plan: eso lo decide siempre un humano.
 - **Nada se ejecuta solo**: las reglas de contención, los hallazgos e informes son para que tú los revises; el asistente no se conecta a ninguna red.
 - **Auditoría**: cada acción que dispara el asistente queda en el mismo registro encadenado, con el actor `ia-modulo:<usuario que preguntó>`, para distinguirla de lo hecho por MCP o a mano.
-- **Costo**: las llamadas a la API de Anthropic las paga la cuenta dueña de la llave que configuraste; la plataforma no añade ningún cargo propio.
+- **Costo**: las llamadas a la API del proveedor elegido las paga la cuenta dueña de la llave que configuraste; la plataforma no añade ningún cargo propio.
 
 ## 9. Mapa de cobertura: del ataque a la defensa
 

@@ -158,28 +158,29 @@ export class Store {
      La llave se cifra con una subllave derivada de la misma llave de firma (nunca en texto plano en la base). */
   private aiEncKey() { return createHash("sha256").update(Buffer.concat([this.signingKey, Buffer.from("ai-key-enc-v1")])).digest(); }
 
-  async getAiConfig(): Promise<{ enabled: boolean; provider: string; model: string; hasKey: boolean; keyLast4: string | null; updatedBy: string | null; updatedAt: string | null }> {
+  async getAiConfig(): Promise<{ enabled: boolean; provider: string; model: string; baseUrl: string | null; hasKey: boolean; keyLast4: string | null; updatedBy: string | null; updatedAt: string | null }> {
     const r = (await this.db.query("select * from public.ai_config where id=1"))[0];
-    return { enabled: r?.enabled === true, provider: r?.provider ?? "anthropic", model: r?.model ?? "claude-sonnet-5-5", hasKey: !!r?.api_key_enc, keyLast4: r?.api_key_last4 ?? null, updatedBy: r?.updated_by ?? null, updatedAt: r?.updated_at ? iso(r.updated_at) : null };
+    return { enabled: r?.enabled === true, provider: r?.provider ?? "anthropic", model: r?.model ?? "claude-sonnet-5-5", baseUrl: r?.base_url ?? null, hasKey: !!r?.api_key_enc, keyLast4: r?.api_key_last4 ?? null, updatedBy: r?.updated_by ?? null, updatedAt: r?.updated_at ? iso(r.updated_at) : null };
   }
 
   /** Solo para uso interno del servidor (módulo de IA); nunca se expone por la API ni por MCP. */
-  async getAiSecret(): Promise<{ enabled: boolean; model: string; apiKey: string } | null> {
+  async getAiSecret(): Promise<{ enabled: boolean; provider: string; model: string; baseUrl: string | null; apiKey: string } | null> {
     const r = (await this.db.query("select * from public.ai_config where id=1"))[0];
     if (!r?.enabled || !r?.api_key_enc) return null;
-    try { return { enabled: true, model: r.model, apiKey: decryptSecret(r.api_key_enc, this.aiEncKey()) }; }
+    try { return { enabled: true, provider: r.provider ?? "anthropic", model: r.model, baseUrl: r.base_url ?? null, apiKey: decryptSecret(r.api_key_enc, this.aiEncKey()) }; }
     catch { return null; } // llave cifrada ilegible (p. ej. cambió ESC_SIGNING_KEY): se trata como "no configurada"
   }
 
-  async setAiConfig(input: { enabled: boolean; model: string; apiKey?: string }, actor: string): Promise<void> {
+  async setAiConfig(input: { enabled: boolean; provider: string; model: string; baseUrl?: string; apiKey?: string }, actor: string): Promise<void> {
+    const baseUrl = input.baseUrl ?? null;
     if (input.apiKey) {
       const enc = encryptSecret(input.apiKey, this.aiEncKey());
-      await this.db.query("update public.ai_config set enabled=$1, model=$2, api_key_enc=$3, api_key_last4=$4, updated_by=$5, updated_at=now() where id=1",
-        [input.enabled, input.model, enc, input.apiKey.slice(-4), actor]);
+      await this.db.query("update public.ai_config set enabled=$1, provider=$2, model=$3, base_url=$4, api_key_enc=$5, api_key_last4=$6, updated_by=$7, updated_at=now() where id=1",
+        [input.enabled, input.provider, input.model, baseUrl, enc, input.apiKey.slice(-4), actor]);
     } else {
-      await this.db.query("update public.ai_config set enabled=$1, model=$2, updated_by=$3, updated_at=now() where id=1", [input.enabled, input.model, actor]);
+      await this.db.query("update public.ai_config set enabled=$1, provider=$2, model=$3, base_url=$4, updated_by=$5, updated_at=now() where id=1", [input.enabled, input.provider, input.model, baseUrl, actor]);
     }
-    await this.audit({ actor, role: "authorizer", action: "ai:config_updated", payload: { enabled: input.enabled, model: input.model, keyChanged: !!input.apiKey } });
+    await this.audit({ actor, role: "authorizer", action: "ai:config_updated", payload: { enabled: input.enabled, provider: input.provider, model: input.model, keyChanged: !!input.apiKey } });
   }
 
   /** Cambia de estado solo por transiciones válidas; atómico (compara el estado previo). */

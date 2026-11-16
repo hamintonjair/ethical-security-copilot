@@ -10,9 +10,9 @@ import { buildReport } from "../report.js";
 import { broadScopeProblem } from "../scope.js";
 import type { State } from "../state.js";
 import { OAuth, OAuthError } from "../oauth.js";
-import { IncidentCreateIn, IncidentEvidenceIn, IncidentContainIn, IncidentTypesIn, IncidentTargetsIn, AiConfigIn, AiAssistIn } from "../schemas.js";
+import { IncidentCreateIn, IncidentEvidenceIn, IncidentContainIn, IncidentTypesIn, IncidentTargetsIn, AiConfigIn, AiModelsIn, AiAssistIn } from "../schemas.js";
 import { analyzeLog, analyzeEmailHeaders, containmentRules, buildIncidentReport, suggestIncidentTypes, TYPE_GUIDANCE, MAX_EVIDENCE_CHARS } from "../incident.js";
-import { runIncidentAssistant, runAssessmentAssistant, testAnthropicKey } from "../ai.js";
+import { runIncidentAssistant, runAssessmentAssistant, testApiKey, listModels, type Provider } from "../ai.js";
 import { redact } from "../redact.js";
 import { markdownToPdf } from "../pdf.js";
 import { Auth, WEB_ROLES, type Session, type WebRole } from "./auth.js";
@@ -342,11 +342,27 @@ export function createApi(ctx: ApiCtx) {
     await store.setAiConfig(input, s.user.username);
     return store.getAiConfig();
   });
+  route("POST", "/api/ai/config/models", CAN.aiConfig, async ({ body }) => {
+    const parsed = AiModelsIn.parse(body);
+    let { provider, apiKey, baseUrl } = parsed;
+    if (!apiKey) {
+      const secret = await store.getAiSecret();
+      if (!secret) throw new HttpError(400, "NO_KEY", "No hay una llave guardada ni se envió una para consultar los modelos.");
+      apiKey = secret.apiKey; provider = provider ?? (secret.provider as Provider); baseUrl = baseUrl ?? (secret.baseUrl ?? undefined);
+    }
+    try { return { models: await listModels(provider ?? "anthropic", apiKey, baseUrl) }; }
+    catch (e) { throw new HttpError(400, "AI_UPSTREAM_ERROR", (e as Error).message || "No se pudo consultar los modelos disponibles."); }
+  });
   route("POST", "/api/ai/config/test", CAN.aiConfig, async ({ body }) => {
     let apiKey = typeof body.apiKey === "string" && body.apiKey ? body.apiKey : undefined;
-    const model = typeof body.model === "string" && body.model ? body.model : "claude-sonnet-5-5";
-    if (!apiKey) { const secret = await store.getAiSecret(); if (!secret) throw new HttpError(400, "NO_KEY", "No hay una llave guardada ni se envió una para probar."); apiKey = secret.apiKey; }
-    return testAnthropicKey(apiKey, model);
+    let provider = (typeof body.provider === "string" && body.provider ? body.provider : undefined) as Provider | undefined;
+    let baseUrl = typeof body.baseUrl === "string" && body.baseUrl ? body.baseUrl : undefined;
+    if (!apiKey) {
+      const secret = await store.getAiSecret();
+      if (!secret) throw new HttpError(400, "NO_KEY", "No hay una llave guardada ni se envió una para probar.");
+      apiKey = secret.apiKey; provider = provider ?? (secret.provider as Provider); baseUrl = baseUrl ?? (secret.baseUrl ?? undefined);
+    }
+    return testApiKey(provider ?? "anthropic", apiKey, baseUrl);
   });
   route("POST", "/api/incidents/:id/ai-assist", CAN.incidentWork, async ({ s, params, body }) => {
     const { question } = AiAssistIn.parse(body);
