@@ -25,8 +25,21 @@ Ciclo: `draft → scope_validated → planned → approved` (humano) → ejecuci
 El esquema vive en `supabase/migrations/` (auditoría append-only, RLS sin políticas, permisos revocados a `anon`/`authenticated`). Solo el servidor y el CLI deben conectarse, con credenciales privadas; no expongas estas tablas por la API pública. Las pruebas usan el mismo SQL sobre PGlite.
 
 ## Laboratorio
+Dos formas de practicar, según si corres la plataforma localmente o usas la consola ya desplegada:
+
+**Local (gratis, en tu laptop):**
+
     docker compose up -d     # objetivo ficticio en 172.28.0.10 (red aislada, sin Internet)
-Usa `mode: "lab"`; el Policy Engine solo admite localhost, `*.lab.internal` y 172.28.0.0/16.
+Usa `mode: "lab"`; el Policy Engine solo admite localhost, `*.lab.internal` y 172.28.0.0/16. Solo funciona
+corriendo el servidor ESC en tu propia máquina (no desde la consola desplegada en Render).
+
+**Objetivo real desde la consola desplegada (recomendado si ya usas la app en el navegador):**
+`lab-target/Dockerfile` despliega [OWASP Juice Shop](https://owasp.org/www-project-juice-shop/) —una
+aplicación deliberadamente vulnerable, publicada por OWASP para practicar hacking ético— como un segundo
+servicio en Render, con su propia URL pública. Luego, desde la consola, creas una evaluación en `mode:
+"active"` con esa URL como alcance y sigues el ciclo completo (alcance → plan → aprobación → ejecución →
+hallazgos → informe) contra un objetivo real, alcanzable desde Internet y legítimamente tuyo. Ver
+`lab-target/README.md` para el detalle.
 
 ## Límites
 Módulos integrados sin shell (TCP connect, HEAD HTTP, análisis estático). Los hard limits (DoS, fuerza bruta, exfiltración, persistencia, movimiento lateral) se bloquean por diseño. Firma HMAC con clave en el entorno; para separar autorizador y servidor, migrar a Ed25519.
