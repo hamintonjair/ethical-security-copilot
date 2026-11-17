@@ -293,3 +293,28 @@ test("incidentes: abrir, analizar evidencia, contención, informe y roles", asyn
   assert.equal(afterClose.status, 400); assert.equal(afterClose.json.error, "INCIDENT_CLOSED");
   assert.equal((await ana.call("POST", `/api/incidents/${id}/status`, { status: "open" })).status, 400);
 });
+
+test("asistente de IA: el historial de preguntas y respuestas queda guardado y aparece en el detalle", async () => {
+  const ana = await as("ana");
+  const open = await ana.call("POST", "/api/incidents", { organization: "Historial IA", contactName: "Ana", contactEmail: "ana@acme.test", summary: "Caso de prueba para el historial del asistente." });
+  const incidentId = open.json.id;
+  const before = await ana.call("GET", `/api/incidents/${incidentId}`);
+  assert.deepEqual(before.json.aiMessages, []); // sin preguntas todavía: la clave existe y está vacía
+
+  await store.addAiMessage("incident", incidentId, "¿qué debo revisar primero?", "### Análisis\nRevisa el **dominio** del remitente y el `Reply-To`.", "ana");
+  const after = await ana.call("GET", `/api/incidents/${incidentId}`);
+  assert.equal(after.json.aiMessages.length, 1);
+  assert.equal(after.json.aiMessages[0].question, "¿qué debo revisar primero?");
+  assert.match(after.json.aiMessages[0].answer, /Reply-To/);
+  assert.equal(after.json.aiMessages[0].actor, "ana");
+  assert.ok(after.json.aiMessages[0].createdAt);
+
+  const a = await ana.call("POST", "/api/assessments", newAssessment());
+  assert.equal(a.status, 200, JSON.stringify(a.json));
+  const beforeA = await ana.call("GET", `/api/assessments/${a.json.id}`);
+  assert.deepEqual(beforeA.json.aiMessages, []);
+  await store.addAiMessage("assessment", a.json.id, "¿falta algo por confirmar?", "Por ahora no hay hallazgos registrados.", "ana");
+  const afterA = await ana.call("GET", `/api/assessments/${a.json.id}`);
+  assert.equal(afterA.json.aiMessages.length, 1);
+  assert.equal(afterA.json.aiMessages[0].question, "¿falta algo por confirmar?");
+});

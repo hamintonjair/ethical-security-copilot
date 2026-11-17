@@ -146,6 +146,7 @@ export function createApi(ctx: ApiCtx) {
       ...content, contentHash: a.contentHash, signatureValid,
       versions: await store.listVersions(a.id), plans: await store.listPlans({ assessmentId: a.id }),
       findings: await store.listFindings(a.id), killSwitch: (await store.killSwitchInfo()).active,
+      aiMessages: await store.listAiMessages("assessment", a.id),
     };
   });
 
@@ -296,7 +297,7 @@ export function createApi(ctx: ApiCtx) {
   route("GET", "/api/incidents/:id", CAN.read, async ({ params }) => {
     const r = await mustFindIncident(params[0]);
     const guidance = Object.fromEntries((r.incident.types ?? []).map((t: string) => [t, TYPE_GUIDANCE[t as keyof typeof TYPE_GUIDANCE]]));
-    return { ...r.incident, evidence: r.evidence, guidance };
+    return { ...r.incident, evidence: r.evidence, guidance, aiMessages: await store.listAiMessages("incident", r.incident.id) };
   });
   route("POST", "/api/incidents/:id/status", CAN.openIncident, async ({ s, params, body }) => {
     const status = String(body.status ?? "");
@@ -385,13 +386,15 @@ export function createApi(ctx: ApiCtx) {
     const { question } = AiAssistIn.parse(body);
     const r = await runIncidentAssistant({ store, incidentId: params[0], question, requestedBy: s.user.username });
     if ("error" in r) throw new HttpError(400, r.error, r.message);
-    return r;
+    const saved = await store.addAiMessage("incident", params[0], question, r.answer, s.user.username);
+    return { ...r, messageId: saved.id, createdAt: saved.createdAt };
   });
   route("POST", "/api/assessments/:id/ai-assist", CAN.findings, async ({ s, params, body }) => {
     const { question } = AiAssistIn.parse(body);
     const r = await runAssessmentAssistant({ store, assessmentId: params[0], question, requestedBy: s.user.username });
     if ("error" in r) throw new HttpError(400, r.error, r.message);
-    return r;
+    const saved = await store.addAiMessage("assessment", params[0], question, r.answer, s.user.username);
+    return { ...r, messageId: saved.id, createdAt: saved.createdAt };
   });
 
   /* ---------- Conexión de clientes MCP (OAuth) ---------- */

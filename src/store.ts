@@ -143,6 +143,19 @@ export class Store {
     return { id, createdAt };
   }
 
+  /* ---------- Historial del Asistente de IA (incidentes y evaluaciones) ---------- */
+  async addAiMessage(subjectType: "incident" | "assessment", subjectId: string, question: string, answer: string, actor: string) {
+    const id = randomUUID(), createdAt = new Date().toISOString();
+    await this.db.query("insert into public.ai_messages (id, subject_type, subject_id, question, answer, actor, created_at) values ($1,$2,$3,$4,$5,$6,$7)",
+      [id, subjectType, subjectId, question, answer, actor, createdAt]);
+    return { id, createdAt };
+  }
+
+  async listAiMessages(subjectType: "incident" | "assessment", subjectId: string) {
+    return (await this.db.query("select * from public.ai_messages where subject_type=$1 and subject_id=$2 order by created_at asc", [subjectType, subjectId]))
+      .map(r => ({ id: r.id, question: r.question, answer: r.answer, actor: r.actor, createdAt: iso(r.created_at) }));
+  }
+
   async setIncidentStatus(id: string, status: "open" | "contained" | "closed", actor: string, role: Role) {
     const cur = (await this.db.query("select status from public.incidents where id=$1", [id]))[0];
     if (!cur) return false;

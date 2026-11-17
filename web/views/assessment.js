@@ -1,4 +1,4 @@
-import { h, api, panel, empty, seal, stateSeal, fmtDate, shortHash, toast, confirmDialog, download, copyText, STATE, MODE, SEVERITY, SEV_TONE, TRIAGE, TARGET_TYPE, targetText } from "../lib.js";
+import { h, api, panel, empty, seal, stateSeal, fmtDate, shortHash, toast, confirmDialog, download, copyText, STATE, MODE, SEVERITY, SEV_TONE, TRIAGE, TARGET_TYPE, targetText, md } from "../lib.js";
 import { plansTable, getModules } from "./shared.js";
 import { assessmentForm } from "./assessments.js";
 
@@ -127,26 +127,32 @@ function findingsTab(ctx, d, reload) {
 
 function aiAssistPanel(ctx, d, reload) {
   if (!ctx.aiEnabled) return panel("Asistente de IA", h("div", { class: "body" }, h("p", { class: "muted" }, "El módulo de IA no está activado. Un autorizador puede activarlo en Configuración → Integración IA.")));
-  const out = h("div", {});
+  const aiMsgCard = (question, answerNode, meta, actionNodes = []) => h("article", { class: "ai-msg" },
+    h("p", { class: "q" }, question), answerNode, ...actionNodes, meta ? h("p", { class: "meta" }, meta) : null);
+  const history = h("div", { class: "ai-history" }, ...(d.aiMessages ?? []).map((m) => aiMsgCard(m.question, md(m.answer), `${m.actor} · ${fmtDate(m.createdAt)}`)));
+  const status = h("div", {});
   const q = h("textarea", { rows: 3, placeholder: "Pídele algo, p. ej.: «revisa los hallazgos y dime si falta algo» o «redacta el informe en borrador con lo confirmado hasta ahora»." });
   const ask = async () => {
-    out.replaceChildren(h("p", { class: "muted" }, "Pensando…"));
+    if (!q.value.trim()) return;
+    status.replaceChildren(h("p", { class: "muted" }, "Pensando…"));
     try {
       const r = await api("POST", `/api/assessments/${d.id}/ai-assist`, { question: q.value });
+      status.replaceChildren();
       const actionNodes = r.actions.map((a) => {
         if (a.result?.findingId) return h("p", {}, `✓ Hallazgo registrado (id ${a.result.findingId}).`);
         if (a.result?.text) return h("div", { class: "stack" }, h("strong", {}, "Borrador de informe:"), h("pre", { class: "report" }, a.result.text));
         if (a.result?.error) return h("p", { class: "err" }, `${a.result.error}${a.result.message ? ": " + a.result.message : ""}`);
         return null;
       }).filter(Boolean);
-      out.replaceChildren(h("div", { class: "stack" }, h("p", {}, r.answer), ...actionNodes));
+      history.append(aiMsgCard(q.value, md(r.answer), r.createdAt ? fmtDate(r.createdAt) : "", actionNodes));
+      history.scrollIntoView({ block: "end" });
       q.value = "";
       if (r.actions.some((a) => a.result?.findingId)) reload();
-    } catch (e) { out.replaceChildren(h("p", { class: "err" }, e.message)); }
+    } catch (e) { status.replaceChildren(h("p", { class: "err" }, e.message)); }
   };
   return panel("Asistente de IA", h("div", { class: "body stack" },
     h("p", { class: "muted" }, "Usa el modelo configurado por tu organización. Puede registrar hallazgos y redactar el informe (en borrador, sin cerrar el ciclo); nunca lanza un módulo contra una red real ni aprueba ningún plan."),
-    q, h("button", { class: "btn primary", onclick: ask }, "Preguntar a la IA"), out));
+    history, q, h("button", { class: "btn primary", onclick: ask }, "Preguntar a la IA"), status));
 }
 
 function findingForm(d, done, prefill = {}) {

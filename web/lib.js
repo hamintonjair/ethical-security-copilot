@@ -19,6 +19,52 @@ export function h(tag, attrs, ...kids) {
   return el;
 }
 
+/* ---------- Markdown ligero (solo DOM, nunca innerHTML) ----------
+   Soporta: encabezados #/##/###, **negrita**, `código`, listas - / * / 1., y párrafos. Pensado para
+   formatear las respuestas en texto del Asistente de IA, no para contenido arbitrario de terceros. */
+function mdInline(text) {
+  const nodes = [];
+  const re = /\*\*([^*]+)\*\*|`([^`]+)`|\*([^*]+)\*/g;
+  let last = 0, m;
+  while ((m = re.exec(text))) {
+    if (m.index > last) nodes.push(document.createTextNode(text.slice(last, m.index)));
+    if (m[1] !== undefined) nodes.push(h("strong", {}, m[1]));
+    else if (m[2] !== undefined) nodes.push(h("code", {}, m[2]));
+    else nodes.push(h("em", {}, m[3]));
+    last = re.lastIndex;
+  }
+  if (last < text.length) nodes.push(document.createTextNode(text.slice(last)));
+  return nodes.length ? nodes : [document.createTextNode(text)];
+}
+export function md(text) {
+  const lines = String(text ?? "").replace(/\r\n/g, "\n").split("\n");
+  const root = h("div", { class: "md" });
+  const isHeading = (l) => /^#{1,6}\s+/.test(l), isBullet = (l) => /^\s*[-*]\s+/.test(l), isNumbered = (l) => /^\s*\d+[.)]\s+/.test(l);
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) { i++; continue; }
+    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (heading) { root.append(h(`h${Math.min(heading[1].length + 3, 6)}`, {}, ...mdInline(heading[2]))); i++; continue; }
+    if (isBullet(line)) {
+      const items = [];
+      while (i < lines.length && isBullet(lines[i])) { items.push(h("li", {}, ...mdInline(lines[i].replace(/^\s*[-*]\s+/, "")))); i++; }
+      root.append(h("ul", {}, items)); continue;
+    }
+    if (isNumbered(line)) {
+      const items = [];
+      while (i < lines.length && isNumbered(lines[i])) { items.push(h("li", {}, ...mdInline(lines[i].replace(/^\s*\d+[.)]\s+/, "")))); i++; }
+      root.append(h("ol", {}, items)); continue;
+    }
+    const para = [];
+    while (i < lines.length && lines[i].trim() && !isHeading(lines[i]) && !isBullet(lines[i]) && !isNumbered(lines[i])) { para.push(lines[i]); i++; }
+    const p = h("p", {});
+    para.forEach((l, idx) => { if (idx) p.append(h("br", {})); mdInline(l).forEach((n) => p.append(n)); });
+    root.append(p);
+  }
+  return root;
+}
+
 /* ---------- API ---------- */
 let csrf = "";
 export const setCsrf = (t) => { csrf = t; };

@@ -1,4 +1,4 @@
-import { h, api, panel, empty, seal, fmtDate, toast, copyText, download, formDialog, confirmDialog, openDialog, errorBox, ROLE } from "../lib.js";
+import { h, api, panel, empty, seal, fmtDate, toast, copyText, download, formDialog, confirmDialog, openDialog, errorBox, ROLE, md } from "../lib.js";
 
 const STATUS = { open: "Abierto", contained: "Contenido", closed: "Cerrado" };
 const STATUS_TONE = { open: "warn", contained: "ok", closed: "mute" };
@@ -141,28 +141,34 @@ export async function incidentView(ctx, id) {
     } catch (e) { toast(e.message, true); }
   };
 
-  const aiBox = h("div", {});
+  const aiActionNodes = (actions) => actions.map((a) => {
+    if (a.result?.rules) return h("div", { class: "stack" }, h("strong", {}, "Plan de contención generado:"), ...Object.entries(a.result.rules).map(([name, content]) => h("div", { class: "stack" }, h("div", { class: "row" }, h("span", {}, name), h("button", { class: "btn small", onclick: () => copyText(content) }, "Copiar"), h("button", { class: "btn small", onclick: () => download(name, content, "text/plain") }, "Descargar")), h("pre", { class: "report" }, content))));
+    if (a.result?.text) return h("div", { class: "stack" }, h("strong", {}, "Informe generado:"), h("pre", { class: "report" }, a.result.text));
+    if (a.result?.facts) return h("div", { class: "stack" }, h("strong", {}, "Evidencia analizada:"), h("p", { class: "muted" }, `${a.result.patterns?.length ?? 0} patrón(es) detectado(s).`));
+    return null;
+  }).filter(Boolean);
+  const aiMsgCard = (question, answerNode, meta, actionNodes = []) => h("article", { class: "ai-msg" },
+    h("p", { class: "q" }, question), answerNode, ...actionNodes, meta ? h("p", { class: "meta" }, meta) : null);
+  const aiHistory = h("div", { class: "ai-history" }, ...(d.aiMessages ?? []).map((m) => aiMsgCard(m.question, md(m.answer), `${m.actor} · ${fmtDate(m.createdAt)}`)));
+  const aiStatus = h("div", {});
   const askAi = async (question, textarea) => {
-    aiBox.replaceChildren(h("p", { class: "muted" }, "Pensando…"));
+    if (!question.trim()) return;
+    aiStatus.replaceChildren(h("p", { class: "muted" }, "Pensando…"));
     try {
       const r = await api("POST", `/api/incidents/${id}/ai-assist`, { question });
-      const actionNodes = r.actions.map((a) => {
-        if (a.result?.rules) return h("div", { class: "stack" }, h("strong", {}, "Plan de contención generado:"), ...Object.entries(a.result.rules).map(([name, content]) => h("div", { class: "stack" }, h("div", { class: "row" }, h("span", {}, name), h("button", { class: "btn small", onclick: () => copyText(content) }, "Copiar"), h("button", { class: "btn small", onclick: () => download(name, content, "text/plain") }, "Descargar")), h("pre", { class: "report" }, content))));
-        if (a.result?.text) return h("div", { class: "stack" }, h("strong", {}, "Informe generado:"), h("pre", { class: "report" }, a.result.text));
-        if (a.result?.facts) return h("div", { class: "stack" }, h("strong", {}, "Evidencia analizada:"), h("p", { class: "muted" }, `${a.result.patterns?.length ?? 0} patrón(es) detectado(s).`));
-        return null;
-      }).filter(Boolean);
-      aiBox.replaceChildren(h("div", { class: "stack" }, h("p", {}, r.answer), ...actionNodes));
+      aiStatus.replaceChildren();
+      aiHistory.append(aiMsgCard(question, md(r.answer), r.createdAt ? `${fmtDate(r.createdAt)}` : "", aiActionNodes(r.actions)));
+      aiHistory.scrollIntoView({ block: "end" });
       if (textarea) textarea.value = "";
       if (r.actions.length) reload();
-    } catch (e) { aiBox.replaceChildren(h("p", { class: "err" }, e.message)); }
+    } catch (e) { aiStatus.replaceChildren(h("p", { class: "err" }, e.message)); }
   };
   const aiPanel = () => {
     if (!ctx.aiEnabled) return panel("Asistente de IA", h("div", { class: "body" }, h("p", { class: "muted" }, "El módulo de IA no está activado. Un autorizador puede activarlo en Configuración → Integración IA.")));
     const q = h("textarea", { rows: 3, placeholder: "Pídele algo, p. ej.: «revisa la evidencia y dime qué hacer» o «genera el plan de contención con los IOCs que ya tenemos»." });
     return panel("Asistente de IA", h("div", { class: "body stack" },
       h("p", { class: "muted" }, "Usa el modelo configurado por tu organización. Solo analiza y redacta; nunca ejecuta nada por sí solo ni abre o cierra el caso."),
-      q, h("button", { class: "btn primary", onclick: () => askAi(q.value, q) }, "Preguntar a la IA"), aiBox));
+      aiHistory, q, h("button", { class: "btn primary", onclick: () => askAi(q.value, q) }, "Preguntar a la IA"), aiStatus));
   };
 
   const reportBox = h("div", {});
