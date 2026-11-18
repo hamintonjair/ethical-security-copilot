@@ -16,30 +16,13 @@ export async function assessmentsView(ctx) {
   return { crumb: "Evaluaciones", title: "Evaluaciones", node };
 }
 
-const LAB_MODULES = ["tcp_port_check", "http_header_audit", "tls_audit", "cookie_audit", "cors_audit", "http_methods_audit", "dns_email_audit", "exposed_files_audit"];
-const labTemplate = (url) => ({
-  name: "Laboratorio — OWASP Juice Shop",
-  allowedModes: ["active"],
-  scope: [{ type: "url", value: url }],
-  allowedModules: LAB_MODULES,
-  window: { notBefore: new Date().toISOString(), notAfter: new Date(Date.now() + 30 * 864e5).toISOString(), maxRequestsPerSecond: 3, maxConcurrency: 2 },
-});
-
 export async function newAssessmentView(ctx) {
   if (!ctx.can("createAssessment")) return { crumb: "Evaluaciones", node: h("p", { class: "err" }, "Solo un autorizador puede crear evaluaciones.") };
-  let initial;
-  const params = new URLSearchParams((ctx.hash ?? location.hash).split("?")[1] ?? "");
-  if (params.get("plantilla") === "lab-juiceshop") {
-    const url = params.get("url") || prompt("URL de tu objetivo de laboratorio (Juice Shop), p. ej. https://esc-lab-juiceshop.onrender.com") || "";
-    if (url) initial = labTemplate(url);
-  }
-  const form = await assessmentForm(ctx, { initial, submitText: "Crear evaluación", onSave: async (body) => {
+  const form = await assessmentForm(ctx, { submitText: "Crear evaluación", onSave: async (body) => {
     const r = await api("POST", "/api/assessments", body); toast("Evaluación creada como borrador."); ctx.go(`#/evaluaciones/${r.id}`);
   } });
   return { crumb: "Evaluaciones › Nueva", title: "Nueva evaluación", node: h("div", { class: "stack" },
-    h("div", { class: "page-head" }, h("div", {}, h("h1", {}, "Nueva evaluación"), h("p", {}, "Se crea como borrador. Después tú avanzas el ciclo: validar alcance, planificar y aprobar.")),
-      !initial ? h("a", { class: "btn", href: "#/evaluaciones/nueva?plantilla=lab-juiceshop" }, "Usar plantilla: laboratorio Juice Shop") : null),
-    initial ? h("p", { class: "hint" }, "Plantilla del laboratorio aplicada: revisa el alcance y completa tus datos como autorizador antes de crear.") : null,
+    h("div", { class: "page-head" }, h("div", {}, h("h1", {}, "Nueva evaluación"), h("p", {}, "Se crea como borrador. Después tú avanzas el ciclo: validar alcance, planificar y aprobar."))),
     form) };
 }
 
