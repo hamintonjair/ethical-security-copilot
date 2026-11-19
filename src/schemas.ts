@@ -206,6 +206,19 @@ export const AiModelsIn = z.object({
 });
 export const AiAssistIn = z.object({ question: z.string().min(1).max(4000) });
 
+/* ---------- Alertas salientes (webhook) ----------
+   Estrictamente informativo: nunca bloquea ni actúa por sí sola, solo avisa cuando aparece un
+   hallazgo de severidad alta/crítica o se abre un incidente. Solo un authorizer la configura. */
+export const AlertSeverity = z.enum(["info", "low", "medium", "high", "critical"]);
+export const AlertsConfigIn = z.object({
+  enabled: z.boolean(),
+  webhookUrl: z.string().url().max(500).optional(), // obligatorio si enabled=true (ver refine)
+  minSeverity: AlertSeverity.default("high"),
+  notifyIncidentOpen: z.boolean().default(true),
+  secret: z.string().min(8).max(300).optional(), // omitido => conserva el secreto ya guardado
+  clearSecret: z.boolean().optional(), // true => quita el secreto de firma (deja de firmar el webhook)
+}).refine(v => !v.enabled || !!v.webhookUrl, { message: "Hace falta la URL del webhook para activar las alertas.", path: ["webhookUrl"] });
+
 /* ---------- Auditoría (hash chain) ---------- */
 export const AuditEntry = z.object({
   seq: z.number().int(),

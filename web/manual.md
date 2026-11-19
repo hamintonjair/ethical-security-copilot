@@ -152,6 +152,29 @@ Dentro de cada evaluación, en la pestaña **Cadena de suministro**, puedes anal
 - **Quién puede usarlo**: autorizador, operador, analista, y el agente de IA por MCP o por el módulo de IA interno (con los mismos límites de siempre: nunca abre ni cierra nada por su cuenta).
 - **Auditoría**: cada análisis queda registrado (`supply_chain:analyzed`) con cuántas dependencias se revisaron y cuántas resultaron vulnerables — el contenido del manifiesto no se guarda.
 
+## 8ter. Alertas por webhook
+
+Estrictamente informativo: avisa a un endpoint propio cuando pase algo que merece atención, pero
+**nunca actúa por sí sola** — ni bloquea, ni contiene, ni cierra nada.
+
+- **Dónde se configura**: *Configuración → Alertas por webhook* (solo un autorizador). Se activa con
+  la casilla, se define la **URL del webhook** (tu propio endpoint, o un servicio como n8n, un
+  webhook de Slack/Teams, etc.) y el **umbral de severidad** desde el que avisar para hallazgos
+  (de "info" hasta "solo crítica"); aparte, una casilla decide si también avisa al abrirse un
+  incidente.
+- **Qué dispara una alerta**: registrar un hallazgo (`finding_create`, por MCP o por la consola) de
+  severidad igual o mayor al umbral elegido, o abrir un incidente nuevo.
+- **Qué lleva el envío**: un POST en JSON con `type` (`finding` o `incident_open`), `title`,
+  `severity`, `asset`, los identificadores correspondientes (`assessmentId`/`incidentId`/
+  `findingId`) y `url` (enlace directo a la consola, si se conoce el host público). Si defines un
+  **secreto de firma**, cada envío incluye la cabecera `X-ESC-Signature` (HMAC-SHA256 del cuerpo)
+  para que tu endpoint verifique que viene de aquí; el secreto se guarda cifrado, igual que la llave
+  del módulo de IA.
+- **Botón de prueba**: *Enviar alerta de prueba* dispara un envío de ejemplo sin esperar a un
+  hallazgo real, para confirmar que la URL y la firma funcionan.
+- **Si el webhook falla o no responde**: nunca rompe el flujo principal (el hallazgo o el incidente
+  se crean igual); solo queda registrado en la auditoría (`alert:sent` o `alert:failed`).
+
 ## 9. Mapa de cobertura: del ataque a la defensa
 
 La herramienta **no ataca**: encuentra las condiciones que los atacantes aprovechan y te dice cómo cerrarlas.

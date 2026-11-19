@@ -3,6 +3,7 @@ import type { FindingInput } from "./schemas.js";
 import type { Store } from "./store.js";
 import { redact } from "./redact.js";
 import { normalizeHost, targetMatches, type Target } from "./scope.js";
+import { sendAlertIfDue, type FetchFn } from "./alerts.js";
 
 export const SEVERITY_BANDS: Record<string, [number, number]> = { info: [0, 0], low: [0.1, 3.9], medium: [4, 6.9], high: [7, 8.9], critical: [9, 10] };
 type Input = z.infer<typeof FindingInput>;
@@ -10,7 +11,7 @@ type Role = "authorizer" | "operator" | "analyst" | "agent" | "auditor";
 export type FindingResult = { ok: true; findingId: string } | { ok: false; error: string; message?: string };
 
 /** Reglas únicas para MCP y web: evaluación válida y en ejecución, severidad coherente con CVSS, activo dentro del alcance y evidencia redactada. */
-export async function createFinding(store: Store, input: Input, actor: string, role: Role): Promise<FindingResult> {
+export async function createFinding(store: Store, input: Input, actor: string, role: Role, fetchImpl: FetchFn = fetch): Promise<FindingResult> {
   const rec = await store.getAssessment(input.assessmentId);
   if (!rec || !rec.signatureValid) return { ok: false, error: "NO_ACTIVE_ASSESSMENT" };
   if (!["executing", "verifying", "triage"].includes(rec.a.state)) return { ok: false, error: "STATE_TRANSITION_INVALID", message: "Solo se registran hallazgos tras ejecutar un módulo." };
@@ -31,5 +32,6 @@ export async function createFinding(store: Store, input: Input, actor: string, r
   };
   const id = await store.addFinding(input.assessmentId, clean);
   await store.audit({ actor, role, action: "finding_create", assessmentId: input.assessmentId, payload: { id, severity: input.severity, asset: clean.asset } });
+  await sendAlertIfDue(store, { kind: "finding", severity: input.severity, title: clean.title, asset: clean.asset, assessmentId: input.assessmentId, findingId: id }, fetchImpl);
   return { ok: true, findingId: id };
 }

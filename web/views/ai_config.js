@@ -11,9 +11,60 @@ const DEFAULT_BASE = {
   gemini: "https://generativelanguage.googleapis.com/v1beta",
 };
 
+const SEVERITIES = [["info", "Info o más (todo)"], ["low", "Baja o más"], ["medium", "Media o más"], ["high", "Alta o crítica"], ["critical", "Solo crítica"]];
+
+function alertsPanel(ctx, acfg) {
+  const enabled = h("input", { type: "checkbox", checked: acfg.enabled });
+  const webhookUrl = h("input", { type: "text", value: acfg.webhookUrl ?? "", placeholder: "https://tu-servidor.ejemplo/webhooks/esc" });
+  const minSeverity = h("select", {}, SEVERITIES.map(([v, l]) => h("option", { value: v, selected: v === acfg.minSeverity }, l)));
+  const notifyIncident = h("input", { type: "checkbox", checked: acfg.notifyIncidentOpen });
+  const secret = h("input", { type: "password", autocomplete: "off", placeholder: acfg.hasSecret ? `Guardado (termina en …${acfg.secretLast4})` : "Opcional: para firmar el cuerpo (HMAC-SHA256)" });
+  const clearSecret = h("input", { type: "checkbox" });
+  const clearSecretField = h("div", { class: "field", hidden: !acfg.hasSecret }, h("label", {}, clearSecret, " Quitar el secreto de firma guardado"));
+  const status = h("p", { class: "muted" }, acfg.updatedAt ? `Última actualización: ${fmtDate(acfg.updatedAt)} por ${acfg.updatedBy}.` : "Aún no configuradas.");
+  const err = h("p", { class: "err", hidden: true, role: "alert" });
+  const testOut = h("p", {});
+
+  const fieldsBox = h("div", { class: "stack" },
+    h("div", { class: "field" }, h("label", {}, "URL del webhook"), webhookUrl, h("span", { class: "hint" }, "Se envía un POST en JSON cuando ocurra un evento que cumpla el umbral. Es solo un aviso: nada se bloquea ni se ejecuta automáticamente desde aquí.")),
+    h("div", { class: "field" }, h("label", {}, "Avisar desde"), minSeverity, h("span", { class: "hint" }, "Umbral de severidad para los hallazgos registrados en evaluaciones.")),
+    h("div", { class: "field" }, h("label", {}, notifyIncident, " Avisar también al abrir un incidente")),
+    h("div", { class: "field" }, h("label", {}, "Secreto de firma (opcional)"), secret, h("span", { class: "hint" }, "Si lo defines, cada envío incluye la cabecera X-ESC-Signature (HMAC-SHA256 del cuerpo) para que tu endpoint verifique que viene de aquí.")),
+    clearSecretField);
+  const toggleFields = () => { fieldsBox.hidden = !enabled.checked; };
+  enabled.addEventListener("change", toggleFields);
+  toggleFields();
+
+  const save = async () => {
+    err.hidden = true;
+    try {
+      const body = { enabled: enabled.checked, webhookUrl: webhookUrl.value.trim() || undefined, minSeverity: minSeverity.value, notifyIncidentOpen: notifyIncident.checked, secret: secret.value.trim() || undefined, clearSecret: clearSecret.checked || undefined };
+      acfg = await api("POST", "/api/alerts/config", body);
+      secret.value = ""; clearSecret.checked = false;
+      secret.placeholder = acfg.hasSecret ? `Guardado (termina en …${acfg.secretLast4})` : "Opcional: para firmar el cuerpo (HMAC-SHA256)";
+      clearSecretField.hidden = !acfg.hasSecret;
+      status.textContent = `Última actualización: ${fmtDate(acfg.updatedAt)} por ${acfg.updatedBy}.`;
+      toast("Configuración de alertas guardada.");
+    } catch (e) { err.textContent = e.issues?.length ? e.issues.map((i) => i.message).join(" ") : e.message; err.hidden = false; }
+  };
+  const test = async () => {
+    testOut.textContent = "Enviando…"; testOut.className = "muted";
+    try { await api("POST", "/api/alerts/test", {}); testOut.textContent = "✓ Enviada. Revisa el registro de auditoría o tu endpoint."; testOut.className = ""; }
+    catch (e) { testOut.textContent = `✗ ${e.message}`; testOut.className = "err"; }
+  };
+
+  return panel("Alertas por webhook", h("div", { class: "body stack" },
+    h("p", { class: "muted" }, "Avisa a un endpoint propio (o a un servicio como n8n, Slack-webhook o similar) cuando aparezca un hallazgo de severidad alta o se abra un incidente. Es solo una notificación: la plataforma nunca actúa sola a partir de ella."),
+    h("div", { class: "field" }, h("label", {}, enabled, " Activar las alertas")),
+    fieldsBox,
+    status, err,
+    h("div", { class: "row" }, h("button", { class: "btn primary", onclick: save }, "Guardar"), h("button", { class: "btn", type: "button", onclick: test }, "Enviar alerta de prueba")),
+    testOut));
+}
+
 export async function aiConfigView(ctx) {
-  let cfg;
-  try { cfg = await api("GET", "/api/ai/config"); } catch (e) { return { crumb: "Configuración", node: errorBox(e) }; }
+  let cfg, acfg;
+  try { [cfg, acfg] = await Promise.all([api("GET", "/api/ai/config"), api("GET", "/api/alerts/config")]); } catch (e) { return { crumb: "Configuración", node: errorBox(e) }; }
 
   const enabled = h("input", { type: "checkbox", checked: cfg.enabled });
   const provider = h("select", {}, PROVIDERS.map(([v, l]) => h("option", { value: v, selected: v === cfg.provider }, l)));
@@ -96,5 +147,6 @@ export async function aiConfigView(ctx) {
       fieldsBox,
       status, err,
       h("div", { class: "row" }, h("button", { class: "btn primary", onclick: save }, "Guardar"), h("button", { class: "btn", type: "button", onclick: test }, "Probar conexión")),
-      testOut))) };
+      testOut)),
+    alertsPanel(ctx, acfg)) };
 }

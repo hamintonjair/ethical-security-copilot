@@ -107,3 +107,22 @@ Disponible en dos lugares, con el mismo panel *Asistente de IA*:
 - **Evaluaciones** (pestaña Hallazgos): registrar hallazgos nuevos y redactar un borrador del informe (`finding_create`, `report_generate`). Nunca lanza un módulo contra una red real ni aprueba ningún plan — eso sigue siempre a cargo de un humano.
 
 En ambos casos, el asistente actúa con exactamente los mismos permisos que ya tenía el rol `agent` por MCP. Cada acción que dispara queda en el mismo registro de auditoría encadenado, con el actor `ia-modulo:<usuario>`.
+
+## Alertas por webhook
+
+Estrictamente informativo: la plataforma nunca actúa sola a partir de una alerta, solo avisa. Un
+authorizer las activa en *Configuración → Alertas por webhook*: define una URL propia (un endpoint
+suyo, o un servicio como n8n, un webhook de Slack/Teams, etc.) y un umbral de severidad mínimo. A
+partir de ahí, un POST en JSON se envía cuando:
+
+- se registra un **hallazgo** (`finding_create`, por MCP o por la consola) de severidad igual o
+  superior al umbral elegido;
+- se **abre un incidente** (si la opción "Avisar también al abrir un incidente" está activa).
+
+El cuerpo lleva `type`, `title`, `severity`, `asset`, `assessmentId`/`incidentId`/`findingId` y
+`url` (enlace a la consola, cuando se conoce el host público). Si se define un secreto, cada envío
+incluye la cabecera `X-ESC-Signature` con un HMAC-SHA256 del cuerpo para que el endpoint propio
+verifique el origen; el secreto se guarda cifrado (AES-256-GCM), igual que la llave del módulo de
+IA. Hay un botón "Enviar alerta de prueba" para comprobar la entrega sin esperar a un hallazgo
+real. Un fallo o una caída del webhook nunca rompe el flujo principal — solo queda auditado
+(`alert:sent` / `alert:failed`).

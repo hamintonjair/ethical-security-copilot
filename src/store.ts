@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { canTransition, type State } from "./state.js";
 import { redact } from "./redact.js";
 import { openDb, type Db } from "./db.js";
+import { sendAlertIfDue, type FetchFn as AlertFetchFn } from "./alerts.js";
 
 type AssessmentT = z.infer<typeof Assessment>;
 type Role = "authorizer" | "operator" | "analyst" | "agent" | "auditor";
@@ -87,12 +88,13 @@ export class Store {
 
 
   /* ---------- Incidentes (Respuesta a Incidentes / Defensa Activa) ---------- */
-  async createIncident(input: { organization: string; contactName: string; contactEmail: string; summary: string; affectedAssets: string[]; types?: string[]; containmentTargets?: string[] }, createdBy: string) {
+  async createIncident(input: { organization: string; contactName: string; contactEmail: string; summary: string; affectedAssets: string[]; types?: string[]; containmentTargets?: string[] }, createdBy: string, fetchImpl: AlertFetchFn = fetch) {
     const id = randomUUID(), createdAt = new Date().toISOString(), types = input.types ?? [], containmentTargets = input.containmentTargets ?? [];
     await this.db.query(
       `insert into public.incidents (id, organization, contact_name, contact_email, summary, affected_assets, types, containment_targets, created_by, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
       [id, input.organization, input.contactName, input.contactEmail, input.summary, JSON.stringify(input.affectedAssets), types, containmentTargets, createdBy, createdAt]);
     await this.audit({ actor: createdBy, role: "authorizer", action: "incident:open", assessmentId: id, payload: { organization: input.organization, types, containmentTargets } });
+    await sendAlertIfDue(this, { kind: "incident_open", title: `Incidente abierto: ${input.organization}`, incidentId: id }, fetchImpl);
     return { id, status: "open" as const, createdAt, createdBy, ...input, types, containmentTargets };
   }
 
@@ -194,6 +196,41 @@ export class Store {
       await this.db.query("update public.ai_config set enabled=$1, provider=$2, model=$3, base_url=$4, updated_by=$5, updated_at=now() where id=1", [input.enabled, input.provider, input.model, baseUrl, actor]);
     }
     await this.audit({ actor, role: "authorizer", action: "ai:config_updated", payload: { enabled: input.enabled, provider: input.provider, model: input.model, keyChanged: !!input.apiKey } });
+  }
+
+  /* ---------- Alertas salientes (webhook) ----------
+     Estrictamente informativo: nunca bloquea ni actúa por sí sola. El secreto de firma (si se define)
+     se cifra igual que la llave del módulo de IA, con una subllave distinta derivada de la misma llave de firma. */
+  private alertsEncKey() { return createHash("sha256").update(Buffer.concat([this.signingKey, Buffer.from("alerts-secret-enc-v1")])).digest(); }
+
+  async getAlertsConfig(): Promise<{ enabled: boolean; webhookUrl: string | null; minSeverity: string; notifyIncidentOpen: boolean; hasSecret: boolean; secretLast4: string | null; updatedBy: string | null; updatedAt: string | null }> {
+    const r = (await this.db.query("select * from public.alerts_config where id=1"))[0];
+    return { enabled: r?.enabled === true, webhookUrl: r?.webhook_url ?? null, minSeverity: r?.min_severity ?? "high", notifyIncidentOpen: r?.notify_incident_open !== false, hasSecret: !!r?.secret_enc, secretLast4: r?.secret_last4 ?? null, updatedBy: r?.updated_by ?? null, updatedAt: r?.updated_at ? iso(r.updated_at) : null };
+  }
+
+  /** Solo para uso interno del servidor (envío de alertas); nunca se expone por la API ni por MCP. */
+  async getAlertsSecret(): Promise<{ webhookUrl: string; minSeverity: "info" | "low" | "medium" | "high" | "critical"; notifyIncidentOpen: boolean; secret: string | null } | null> {
+    const r = (await this.db.query("select * from public.alerts_config where id=1"))[0];
+    if (!r?.enabled || !r?.webhook_url) return null;
+    let secret: string | null = null;
+    if (r.secret_enc) { try { secret = decryptSecret(r.secret_enc, this.alertsEncKey()); } catch { secret = null; } } // llave cifrada ilegible => se trata como "sin firmar"
+    return { webhookUrl: r.webhook_url, minSeverity: r.min_severity ?? "high", notifyIncidentOpen: r.notify_incident_open !== false, secret };
+  }
+
+  async setAlertsConfig(input: { enabled: boolean; webhookUrl?: string; minSeverity: string; notifyIncidentOpen: boolean; secret?: string; clearSecret?: boolean }, actor: string): Promise<void> {
+    const webhookUrl = input.webhookUrl ?? null;
+    if (input.secret) {
+      const enc = encryptSecret(input.secret, this.alertsEncKey());
+      await this.db.query("update public.alerts_config set enabled=$1, webhook_url=$2, min_severity=$3, notify_incident_open=$4, secret_enc=$5, secret_last4=$6, updated_by=$7, updated_at=now() where id=1",
+        [input.enabled, webhookUrl, input.minSeverity, input.notifyIncidentOpen, enc, input.secret.slice(-4), actor]);
+    } else if (input.clearSecret) {
+      await this.db.query("update public.alerts_config set enabled=$1, webhook_url=$2, min_severity=$3, notify_incident_open=$4, secret_enc=null, secret_last4=null, updated_by=$5, updated_at=now() where id=1",
+        [input.enabled, webhookUrl, input.minSeverity, input.notifyIncidentOpen, actor]);
+    } else {
+      await this.db.query("update public.alerts_config set enabled=$1, webhook_url=$2, min_severity=$3, notify_incident_open=$4, updated_by=$5, updated_at=now() where id=1",
+        [input.enabled, webhookUrl, input.minSeverity, input.notifyIncidentOpen, actor]);
+    }
+    await this.audit({ actor, role: "authorizer", action: "alerts:config_updated", payload: { enabled: input.enabled, minSeverity: input.minSeverity, notifyIncidentOpen: input.notifyIncidentOpen, secretChanged: !!input.secret, secretCleared: !!input.clearSecret } });
   }
 
   /** Cambia de estado solo por transiciones válidas; atómico (compara el estado previo). */

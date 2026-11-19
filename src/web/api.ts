@@ -10,10 +10,11 @@ import { buildReport } from "../report.js";
 import { broadScopeProblem } from "../scope.js";
 import type { State } from "../state.js";
 import { OAuth, OAuthError } from "../oauth.js";
-import { IncidentCreateIn, IncidentEvidenceIn, IncidentContainIn, IncidentTypesIn, IncidentTargetsIn, AiConfigIn, AiModelsIn, AiAssistIn, SupplyChainAnalyzeIn } from "../schemas.js";
+import { IncidentCreateIn, IncidentEvidenceIn, IncidentContainIn, IncidentTypesIn, IncidentTargetsIn, AiConfigIn, AiModelsIn, AiAssistIn, SupplyChainAnalyzeIn, AlertsConfigIn } from "../schemas.js";
 import { analyzeLog, analyzeEmailHeaders, containmentRules, buildIncidentReport, suggestIncidentTypes, TYPE_GUIDANCE, MAX_EVIDENCE_CHARS } from "../incident.js";
 import { parseManifest, checkVulnerabilities } from "../supplychain.js";
 import { runIncidentAssistant, runAssessmentAssistant, testApiKey, listModels, type Provider } from "../ai.js";
+import { sendAlertIfDue } from "../alerts.js";
 import { redact } from "../redact.js";
 import { markdownToPdf } from "../pdf.js";
 import { Auth, WEB_ROLES, type Session, type WebRole } from "./auth.js";
@@ -38,6 +39,7 @@ const CAN = {
   openIncident: ["authorizer", "operator"] as WebRole[],
   incidentWork: ["authorizer", "operator", "analyst"] as WebRole[],
   aiConfig: ["authorizer"] as WebRole[],
+  alertsConfig: ["authorizer"] as WebRole[],
 };
 
 const MODULE_LABELS: Record<string, { title: string; description: string }> = {
@@ -382,6 +384,23 @@ export function createApi(ctx: ApiCtx) {
     }
     return testApiKey(provider ?? "anthropic", apiKey, baseUrl);
   });
+
+  /* ---------- Alertas salientes (webhook) ----------
+     Estrictamente informativo: solo un authorizer la configura; la plataforma nunca actúa sola a
+     partir de una alerta, solo avisa. El secreto de firma (si se define) se guarda cifrado. */
+  route("GET", "/api/alerts/config", CAN.alertsConfig, async () => store.getAlertsConfig());
+  route("POST", "/api/alerts/config", CAN.alertsConfig, async ({ s, body }) => {
+    const input = AlertsConfigIn.parse(body);
+    await store.setAlertsConfig(input, s.user.username);
+    return store.getAlertsConfig();
+  });
+  route("POST", "/api/alerts/test", CAN.alertsConfig, async () => {
+    const cfg = await store.getAlertsConfig();
+    if (!cfg.enabled || !cfg.webhookUrl) throw new HttpError(400, "ALERTS_NOT_CONFIGURED", "Activa las alertas y guarda una URL de webhook antes de probar.");
+    await sendAlertIfDue(store, { kind: "test", title: "Alerta de prueba desde Ethical Security Copilot" });
+    return { ok: true };
+  });
+
   route("POST", "/api/incidents/:id/ai-assist", CAN.incidentWork, async ({ s, params, body }) => {
     const { question } = AiAssistIn.parse(body);
     const r = await runIncidentAssistant({ store, incidentId: params[0], question, requestedBy: s.user.username });
