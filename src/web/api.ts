@@ -341,16 +341,17 @@ export function createApi(ctx: ApiCtx) {
   });
   route("GET", "/api/incidents/:id/report", ALL, async ({ params, query, res }) => {
     const r = await mustFindIncident(params[0]);
+    const aiHistory = await store.listAiMessages("incident", params[0]);
     const q = query.get("format");
     if (q === "pdf") {
-      const text = buildIncidentReport(r.incident, r.evidence, "markdown");
+      const text = buildIncidentReport(r.incident, r.evidence, "markdown", aiHistory);
       const pdf = await markdownToPdf(`Incidente: ${r.incident.organization}`, text, { subtitle: `Generado ${new Date().toLocaleString("es-CO")}` });
       res.writeHead(200, { "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="incidente-${params[0].slice(0, 8)}.pdf"`, "Cache-Control": "no-store" });
       res.end(pdf);
       return null;
     }
     const format = q === "json" ? "json" : "markdown";
-    return { text: buildIncidentReport(r.incident, r.evidence, format), format };
+    return { text: buildIncidentReport(r.incident, r.evidence, format, aiHistory), format };
   });
 
   /* ---------- Módulo de IA (API propia, dentro de la plataforma) ----------

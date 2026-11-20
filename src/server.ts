@@ -228,7 +228,8 @@ export function createServer(deps: ServerDeps) {
     const d = await allowed("incident_report", incidentId); if (d) return d;
     const rec = await store.getIncident(incidentId);
     if (!rec) return json({ error: "INCIDENT_NOT_FOUND" }, true);
-    const text = buildIncidentReport(rec.incident, rec.evidence, format);
+    const aiHistory = await store.listAiMessages("incident", incidentId);
+    const text = buildIncidentReport(rec.incident, rec.evidence, format, aiHistory);
     return { content: [{ type: "text" as const, text }] };
   });
 

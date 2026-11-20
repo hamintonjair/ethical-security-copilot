@@ -317,4 +317,17 @@ test("asistente de IA: el historial de preguntas y respuestas queda guardado y a
   const afterA = await ana.call("GET", `/api/assessments/${a.json.id}`);
   assert.equal(afterA.json.aiMessages.length, 1);
   assert.equal(afterA.json.aiMessages[0].question, "¿falta algo por confirmar?");
+
+  // El historial de IA también aparece en los informes (incidente y evaluación), en markdown y en json.
+  const incRepMd = await ana.call("GET", `/api/incidents/${incidentId}/report?format=markdown`);
+  assert.match(incRepMd.json.text, /Historial del asistente de IA/);
+  assert.match(incRepMd.json.text, /¿qué debo revisar primero\?/);
+  const incRepJson = await ana.call("GET", `/api/incidents/${incidentId}/report?format=json`);
+  assert.equal(incRepJson.json.text.includes("aiHistory"), true);
+  assert.ok(JSON.parse(incRepJson.json.text).aiHistory.some((m: any) => m.question === "¿qué debo revisar primero?"));
+
+  const assRepMd = await ana.call("POST", `/api/assessments/${a.json.id}/report`, { format: "markdown" });
+  assert.equal(assRepMd.status, 200, JSON.stringify(assRepMd.json));
+  assert.match(assRepMd.json.text, /Historial del asistente de IA/);
+  assert.match(assRepMd.json.text, /falta algo por confirmar/);
 });

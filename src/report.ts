@@ -18,9 +18,10 @@ export async function buildReport(store: Store, o: { assessmentId: string; forma
     .sort((x, y) => ORDER.indexOf(y.data.severity) - ORDER.indexOf(x.data.severity));
   if (o.advance) for (const next of ["verifying", "triage", "reported"] as State[]) if (a.state !== "halted" && a.state !== "closed") await store.transition(o.assessmentId, next, o.actor, o.role);
   const chain = await store.verifyAuditChain();
+  const aiHistory = await store.listAiMessages("assessment", o.assessmentId);
   const meta = { assessment: a.name, version: a.version, organization: a.authorizer.organization, window: a.window, scope: a.scope, exclusions: a.exclusions.map(e => ({ target: e.target, technique: e.technique })), auditChain: chain.ok ? "íntegra" : `ALTERADA en seq ${(chain as any).brokenAtSeq}` };
   let text: string;
-  if (o.format === "json") text = JSON.stringify({ meta, findings: findings.map(f => ({ id: f.id, ...f.data })) }, null, 2);
+  if (o.format === "json") text = JSON.stringify({ meta, findings: findings.map(f => ({ id: f.id, ...f.data })), aiHistory }, null, 2);
   else {
     const L: string[] = [`# Informe: ${a.name}`, "", `- Organización autorizadora: ${a.authorizer.organization}`, `- Ventana: ${a.window.notBefore} → ${a.window.notAfter}`, `- Alcance: ${a.scope.map(s => s.value).join(", ")}`, `- Auditoría: ${meta.auditChain}`, "", `## Resumen`, "", "| Severidad | Hallazgos |", "|---|---|", ...ORDER.slice().reverse().map(s => `| ${s} | ${findings.filter(f => f.data.severity === s).length} |`), ""];
     for (const f of findings) {
@@ -28,6 +29,11 @@ export async function buildReport(store: Store, o: { assessmentId: string; forma
       L.push(`## ${x.title}`, "", `- **Activo:** ${x.asset}`, `- **Severidad:** ${x.severity} (CVSS ${x.cvssScore}, ${x.cvssVector})`, `- **Confianza:** ${x.confidence}`, `- **Triaje:** ${x.triage}`, "", "### Hechos observados", ...x.observedFacts.map((o: string) => `- ${o}`), "");
       if (x.riskHypotheses.length) L.push("### Hipótesis de riesgo (no verificadas)", ...x.riskHypotheses.map((o: string) => `- ${o}`), "");
       L.push("### Evidencia (redactada)", ...x.evidence.flatMap((e: any) => [`- ${e.description}`, "  ```", `  ${e.redactedContent.replace(/\n/g, "\n  ")}`, "  ```", ...e.reproSteps.map((s: string, i: number) => `  ${i + 1}. ${s}`)]), "", `### Impacto de negocio`, x.businessImpact, "", `### Recomendación`, x.recommendation, "");
+    }
+    if (aiHistory.length) {
+      L.push(`## Historial del asistente de IA (${aiHistory.length})`,
+        `_Análisis asistido por IA para apoyar la revisión humana — no es un hallazgo verificado ni una decisión tomada por la plataforma._`, "",
+        ...aiHistory.flatMap(m => [`**${m.createdAt} · ${m.actor} preguntó:**`, m.question, "", m.answer, ""]));
     }
     text = L.join("\n");
   }

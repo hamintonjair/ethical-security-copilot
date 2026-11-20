@@ -185,11 +185,13 @@ export function containmentRules(ips: string[], domains: string[], targets: "fir
   return out;
 }
 
+export interface AiHistoryEntry { question: string; answer: string; actor: string; createdAt: string }
+
 export function buildIncidentReport(inc: { organization: string; contactName: string; contactEmail: string; summary: string; affectedAssets: string[]; status: string; createdAt: string },
-  evidence: { kind: string; description: string; redactedContent: string; iocs: Iocs; createdAt: string }[], format: "markdown" | "json") {
+  evidence: { kind: string; description: string; redactedContent: string; iocs: Iocs; createdAt: string }[], format: "markdown" | "json", aiHistory: AiHistoryEntry[] = []) {
   const allIocs: Iocs = { ips: [], domains: [], urls: [], hashes: [], emails: [] };
   for (const e of evidence) for (const k of Object.keys(allIocs) as (keyof Iocs)[]) allIocs[k] = uniq([...allIocs[k], ...e.iocs[k]]);
-  if (format === "json") return JSON.stringify({ incident: inc, evidenceCount: evidence.length, iocs: allIocs, evidence }, null, 2);
+  if (format === "json") return JSON.stringify({ incident: inc, evidenceCount: evidence.length, iocs: allIocs, evidence, aiHistory }, null, 2);
   const lines = [
     `# Informe de incidente — ${inc.organization}`, "", `**Estado:** ${inc.status} · **Abierto:** ${inc.createdAt}`,
     `**Reportado por:** ${inc.contactName} (${inc.contactEmail})`, `**Activos afectados:** ${inc.affectedAssets.join(", ") || "sin especificar"}`, "", `## Resumen`, inc.summary, "",
@@ -207,6 +209,11 @@ export function buildIncidentReport(inc: { organization: string; contactName: st
     `- No alteres los logs originales; trabaja sobre copias.`, `- Anota fecha y hora en UTC de cada evento.`, `- Guarda los encabezados completos de los correos (no solo el cuerpo).`,
     `- Calcula y guarda el hash (SHA-256) de cada archivo de evidencia antes de compartirlo.`, "",
   ];
+  if (aiHistory.length) {
+    lines.push(`## Historial del asistente de IA (${aiHistory.length})`,
+      `_Análisis asistido por IA para apoyar la revisión humana — no es un hallazgo verificado ni una decisión tomada por la plataforma._`, "",
+      ...aiHistory.flatMap(m => [`**${m.createdAt} · ${m.actor} preguntó:**`, m.question, "", m.answer, ""]));
+  }
   return lines.join("\n");
 }
 
