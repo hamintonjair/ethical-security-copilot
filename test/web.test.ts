@@ -331,3 +331,38 @@ test("asistente de IA: el historial de preguntas y respuestas queda guardado y a
   assert.match(assRepMd.json.text, /Historial del asistente de IA/);
   assert.match(assRepMd.json.text, /falta algo por confirmar/);
 });
+
+test("consola web: puede lanzar un módulo pasivo directo y uno activo pide plan aprobado; roles y kill switch", async () => {
+  const ana = await as("ana"), omar = await as("omar"), alba = await as("alba");
+  const { json: a } = await ana.call("POST", "/api/assessments", newAssessment());
+  for (const to of ["scope_validated", "planned", "approved"]) assert.equal((await ana.call("POST", `/api/assessments/${a.id}/advance`, { to })).status, 200);
+
+  // analyst no puede ejecutar módulos desde la consola (ni authorizer/operator ni agente, solo HUMAN_OPS)
+  assert.equal((await alba.call("POST", `/api/assessments/${a.id}/scan`, { moduleId: "config_audit", mode: "passive", targets: [{ type: "ip", value: "127.0.0.1" }], params: { content: "server_tokens on" } })).status, 403);
+
+  // pasivo, sin cambio de estado: se ejecuta directo, sin plan
+  const direct = await omar.call("POST", `/api/assessments/${a.id}/scan`, { moduleId: "config_audit", mode: "passive", targets: [{ type: "ip", value: "127.0.0.1" }], params: { content: "server_tokens on" } });
+  assert.equal(direct.status, 200, JSON.stringify(direct.json));
+  assert.equal(direct.json.status, "completed");
+  assert.ok(direct.json.facts.some((f: string) => /revela su versión/.test(f)));
+
+  // activo: la primera llamada no ejecuta nada, devuelve un plan pendiente de aprobación
+  const pending = await ana.call("POST", `/api/assessments/${a.id}/scan`, { moduleId: "tcp_port_check", mode: "active", targets: [{ type: "ip", value: "127.0.0.1" }], params: { ports: "80" } });
+  assert.equal(pending.status, 200, JSON.stringify(pending.json));
+  assert.equal(pending.json.status, "pending_approval");
+  assert.ok(pending.json.planId);
+  // alba (analyst) no puede aprobar planes
+  assert.equal((await alba.call("POST", `/api/plans/${pending.json.planId}/approve`)).status, 403);
+  const approved = await omar.call("POST", `/api/plans/${pending.json.planId}/approve`);
+  assert.equal(approved.status, 200, JSON.stringify(approved.json));
+  const ran = await ana.call("POST", `/api/assessments/${a.id}/scan`, { moduleId: "tcp_port_check", mode: "active", targets: [{ type: "ip", value: "127.0.0.1" }], params: { ports: "80" }, planId: pending.json.planId, approvalToken: approved.json.token });
+  assert.equal(ran.status, 200, JSON.stringify(ran.json));
+  assert.ok(["completed", "denied", "aborted"].includes(ran.json.status));
+
+  // kill switch desde la consola, con assessmentId específico (no detiene las demás evaluaciones)
+  const stop = await omar.call("POST", "/api/scan/stop", { assessmentId: a.id, reason: "prueba desde la consola" });
+  assert.equal(stop.status, 200, JSON.stringify(stop.json));
+  assert.equal(stop.json.killSwitch, "active");
+  assert.equal((await alba.call("POST", "/api/scan/stop", { reason: "sin permiso" })).status, 403);
+  assert.equal((await ana.call("POST", "/api/killswitch/release")).status, 200);
+});

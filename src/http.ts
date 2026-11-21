@@ -9,6 +9,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { Store } from "./store.js";
 import { createServer, type RunRegistry } from "./server.js";
 import { PolicyEngine } from "./policy.js";
+import { Gateway } from "./gateway.js";
 import { builtinModules } from "./modules.js";
 import { sha256 } from "./crypto.js";
 import { Auth } from "./web/auth.js";
@@ -44,7 +45,7 @@ export function createHttpApp(o: HttpOptions): http.Server {
   const modules = builtinModules();
   const policy = new PolicyEngine(o.store, { manifests: new Map([...modules].map(([k, m]) => [k, m.manifest])) });
   const runs: RunRegistry = new Map();
-  const api = createApi({ store: o.store, auth: new Auth(o.store), runs });
+  const api = createApi({ store: o.store, auth: new Auth(o.store), runs, modules, policy, gateway: new Gateway(policy) });
   const oauth = new OAuth(o.store);
   const hosts = new Set(o.allowedHosts.map(h => h.toLowerCase()));
 

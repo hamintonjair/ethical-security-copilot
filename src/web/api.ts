@@ -1,14 +1,17 @@
 import type http from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import { z, ZodError } from "zod";
-import { AssessmentInput, FindingInput } from "../schemas.js";
+import { AssessmentInput, FindingInput, ScanInitiateIn, ScanStopIn } from "../schemas.js";
 import type { Store } from "../store.js";
 import type { RunRegistry } from "../server.js";
-import { builtinModules } from "../modules.js";
+import { builtinModules, type Module } from "../modules.js";
 import { createFinding } from "../findings.js";
 import { buildReport } from "../report.js";
-import { broadScopeProblem } from "../scope.js";
+import { broadScopeProblem, type Target } from "../scope.js";
 import type { State } from "../state.js";
+import { PolicyEngine } from "../policy.js";
+import { Gateway } from "../gateway.js";
+import { runScanInitiate, runScanStop } from "../scan.js";
 import { OAuth, OAuthError } from "../oauth.js";
 import { IncidentCreateIn, IncidentEvidenceIn, IncidentContainIn, IncidentTypesIn, IncidentTargetsIn, AiConfigIn, AiModelsIn, AiAssistIn, SupplyChainAnalyzeIn, AlertsConfigIn } from "../schemas.js";
 import { analyzeLog, analyzeEmailHeaders, containmentRules, buildIncidentReport, suggestIncidentTypes, TYPE_GUIDANCE, MAX_EVIDENCE_CHARS } from "../incident.js";
@@ -40,6 +43,8 @@ const CAN = {
   incidentWork: ["authorizer", "operator", "analyst"] as WebRole[],
   aiConfig: ["authorizer"] as WebRole[],
   alertsConfig: ["authorizer"] as WebRole[],
+  scanExec: HUMAN_OPS,
+  scanStop: HUMAN_OPS,
 };
 
 const MODULE_LABELS: Record<string, { title: string; description: string }> = {
@@ -57,7 +62,7 @@ const MODULE_LABELS: Record<string, { title: string; description: string }> = {
 
 class HttpError extends Error { constructor(public status: number, public code: string, message: string) { super(message); } }
 
-export interface ApiCtx { store: Store; auth: Auth; runs: RunRegistry }
+export interface ApiCtx { store: Store; auth: Auth; runs: RunRegistry; modules?: Map<string, Module>; policy?: PolicyEngine; gateway?: Gateway }
 
 function send(res: http.ServerResponse, status: number, body: unknown, headers: Record<string, string | string[]> = {}) {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...headers });
@@ -92,6 +97,9 @@ interface Route { method: string; re: RegExp; roles: WebRole[]; h: Handler }
 
 export function createApi(ctx: ApiCtx) {
   const { store, auth, runs } = ctx;
+  const modules = ctx.modules ?? builtinModules();
+  const policy = ctx.policy ?? new PolicyEngine(store, { manifests: new Map([...modules].map(([k, m]) => [k, m.manifest])) });
+  const gateway = ctx.gateway ?? new Gateway(policy);
   const routes: Route[] = [];
   const route = (method: string, path: string, roles: WebRole[], h: Handler) => routes.push({ method, re: new RegExp(`^${path.replace(/:id/g, "([0-9a-fA-F-]{36})")}$`), roles, h });
   const who = (s: Session) => ({ actor: s.user.username, role: s.user.role as WebRole });
@@ -189,6 +197,23 @@ export function createApi(ctx: ApiCtx) {
   route("POST", "/api/plans/:id/reject", CAN.decidePlan, async ({ s, params }) => {
     if (!(await store.rejectPlan(params[0], s.user.username, s.user.role))) throw new HttpError(409, "PLAN_STATE", "El plan ya no está pendiente.");
     return { ok: true };
+  });
+
+  /* ---------- Ejecución de módulos ----------
+     La misma comprobación que ya hacía el servidor MCP (alcance, ventana, ritmo, plan aprobado):
+     si el módulo cambia estado o el modo es "active", esto nunca ejecuta nada — solo crea el plan
+     pendiente que un humano (authorizer/operator) debe aprobar antes de que algo corra de verdad. */
+  const ScanInitiateWithPlan = ScanInitiateIn.extend({ planId: z.string().uuid().optional(), approvalToken: z.string().optional() });
+  route("POST", "/api/assessments/:id/scan", CAN.scanExec, async ({ s, params, body }) => {
+    await mustFind(params[0]);
+    const input = ScanInitiateWithPlan.parse({ ...body, assessmentId: params[0] });
+    const r = await runScanInitiate({ store, policy, gateway, modules, running: runs }, s.user.role, s.user.username, input);
+    if ("error" in r) throw new HttpError(r.error === "MODULE_NOT_FOUND" ? 400 : 404, r.error, r.error === "MODULE_NOT_FOUND" ? "El módulo no existe." : "La evaluación no existe o la firma ya no es válida.");
+    return r;
+  });
+  route("POST", "/api/scan/stop", CAN.scanStop, async ({ s, body }) => {
+    const input = ScanStopIn.parse(body);
+    return runScanStop({ store, running: runs }, s.user.role, s.user.username, input.assessmentId, input.reason);
   });
 
   /* ---------- Hallazgos e informes ---------- */
@@ -411,7 +436,7 @@ export function createApi(ctx: ApiCtx) {
   });
   route("POST", "/api/assessments/:id/ai-assist", CAN.findings, async ({ s, params, body }) => {
     const { question } = AiAssistIn.parse(body);
-    const r = await runAssessmentAssistant({ store, assessmentId: params[0], question, requestedBy: s.user.username });
+    const r = await runAssessmentAssistant({ store, assessmentId: params[0], question, requestedBy: s.user.username, policy, gateway, modules, running: runs });
     if ("error" in r) throw new HttpError(400, r.error, r.message);
     const saved = await store.addAiMessage("assessment", params[0], question, r.answer, s.user.username);
     return { ...r, messageId: saved.id, createdAt: saved.createdAt };

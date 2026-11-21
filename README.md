@@ -58,6 +58,7 @@ Consola en `/app/` (misma instancia que el MCP en `/mcp`): panel, evaluaciones c
 
 - Cuentas propias (usuario + contraseña, scrypt), sesión con cookie `HttpOnly`/`SameSite=Strict`, token CSRF, bloqueo tras 5 fallos y cierre por inactividad (30 min).
 - Roles: `authorizer`, `operator`, `analyst`, `auditor`.
+- La consola también puede lanzar módulos y usar el kill switch directamente (no solo por MCP): `POST /api/assessments/:id/scan` y `POST /api/scan/stop` (authorizer, operator), con la misma lógica compartida de alcance, ventana, ritmo y aprobación de plan (`src/scan.ts`).
 - Primer usuario (una sola vez, desde tu equipo, con la misma `ESC_DATABASE_URL` y `ESC_SIGNING_KEY` que Render):
 
 ```bash
@@ -102,11 +103,11 @@ Herramienta MCP: `supply_chain_analyze` (autorizador, operador, analista, agente
 
 Segunda forma de conectar un modelo de IA, integrada en la propia consola, sin necesitar un cliente MCP aparte. No tiene que ser Anthropic: en *Configuración → Integración IA* un autorizador elige el **proveedor** (Anthropic/Claude, cualquier API **compatible con OpenAI** —OpenAI, Azure OpenAI, un proxy propio, etc., con URL base configurable— o **Google Gemini**), pega su llave y pulsa "Cargar modelos" para elegir el modelo de una lista real obtenida en vivo de esa API (con respaldo para escribir el id a mano si la carga falla). La llave se cifra con AES-256-GCM y nunca se devuelve ni se registra. Los campos de proveedor/URL/llave/modelo solo aparecen una vez marcado "Activar el módulo de IA". Desde ahí, el panel *Asistente de IA* de cada incidente deja pedirle a la IA que analice la evidencia, genere el plan de contención o el informe, en lenguaje natural — con el mismo ciclo de herramientas sea cual sea el proveedor elegido.
 
-Disponible en dos lugares, con el mismo panel *Asistente de IA*:
-- **Incidentes**: analizar evidencia, generar el plan de contención y el informe (`incident_evidence_analyze`, `incident_contain_plan`, `incident_report`). Nunca abre ni cierra un incidente.
-- **Evaluaciones** (pestaña Hallazgos): registrar hallazgos nuevos y redactar un borrador del informe (`finding_create`, `report_generate`). Nunca lanza un módulo contra una red real ni aprueba ningún plan — eso sigue siempre a cargo de un humano.
+Disponible en dos lugares, en un panel *Asistente de IA* fijo en la columna derecha (se mantiene a la vista mientras se desplaza el resto de la página; en pantallas angostas pasa a una sola columna):
+- **Incidentes**: analizar evidencia, generar el plan de contención y el informe (`incident_evidence_analyze`, `incident_contain_plan`, `incident_report`), y marcar tipos de incidente o herramientas de bloqueo disponibles (`incident_types_set`, `incident_targets_set`) **solo** tras la confirmación explícita del humano en el chat. Nunca abre ni cierra un incidente.
+- **Evaluaciones**: validar alcance (`scope_validate`), lanzar un módulo (`scan_initiate`) **solo** cuando el humano lo pida explícitamente en el chat — en modo activo o si el módulo cambia estado, la primera llamada no ejecuta nada: devuelve un plan `pending_approval` que un humano (`operator`) debe aprobar aparte con un token de un solo uso, exactamente igual que por MCP o por la consola —, detener todo con el kill switch (`scan_stop`), analizar cadena de suministro (`supply_chain_analyze`), registrar hallazgos y redactar un borrador del informe (`finding_create`, `report_generate`). Nunca abre ni cierra la evaluación ni aprueba un plan por su cuenta — eso sigue siempre a cargo de un humano.
 
-En ambos casos, el asistente actúa con exactamente los mismos permisos que ya tenía el rol `agent` por MCP. Cada acción que dispara queda en el mismo registro de auditoría encadenado, con el actor `ia-modulo:<usuario>`.
+En ambos casos, el asistente actúa con exactamente los mismos permisos que ya tenía el rol `agent` por MCP — ni una herramienta más. Cada acción que dispara queda en el mismo registro de auditoría encadenado, con el actor `ia-modulo:<usuario>`.
 
 ## Alertas por webhook
 

@@ -183,8 +183,7 @@ export async function incidentView(ctx, id) {
       h("p", { class: "muted" }, "IOCs: ", ["ips", "domains", "urls", "hashes", "emails"].map((k) => (e.iocs?.[k]?.length ? `${k} (${e.iocs[k].length}): ${e.iocs[k].join(", ")}` : null)).filter(Boolean).join(" · ") || "ninguno"),
       h("pre", { class: "report" }, e.redactedContent)))) : [empty("Sin evidencia todavía", "Añade un log o unas cabeceras de correo para empezar el análisis.")];
 
-  return { crumb: `Incidentes › ${d.organization}`, title: d.organization, node: h("div", { class: "stack" },
-    h("div", { class: "page-head" }, h("div", {}, h("h1", {}, d.organization), h("p", { class: "row" }, seal(STATUS[d.status] ?? d.status, STATUS_TONE[d.status]), h("span", { class: "muted" }, `Abierto ${fmtDate(d.createdAt)} por ${d.createdBy}`)))),
+  const main = h("div", { class: "stack" },
     panel("Resumen", h("div", { class: "body" }, h("dl", { class: "facts" }, h("dt", {}, "Contacto"), h("dd", {}, `${d.contactName} · ${d.contactEmail}`),
       h("dt", {}, "Activos afectados"), h("dd", {}, d.affectedAssets.join(", ") || "sin especificar"), h("dt", {}, "Qué está pasando"), h("dd", {}, d.summary),
       h("dt", {}, "Tipo(s) de incidente"), h("dd", {}, (d.types ?? []).length ? h("div", { class: "row" }, (d.types ?? []).map((t) => seal(TYPE_LABEL[t] ?? t, "mute"))) : h("span", { class: "muted" }, "sin marcar (check-out pendiente)")),
@@ -200,11 +199,13 @@ export async function incidentView(ctx, id) {
     panel(`Evidencia (${d.evidence.length})`, h("div", {}, evList), !closed ? h("button", { class: "btn small primary", onclick: addEvidence }, "Añadir evidencia") : null),
     evBox,
     suggestBox,
-    !closed ? aiPanel() : null,
     panel("Plan de contención", h("div", { class: "body stack" }, h("p", { class: "muted" }, `IOCs acumulados: ${allIps.length} IP(s), ${allDomains.length} dominio(s).`),
       h("p", { class: "muted" }, (d.containmentTargets ?? []).length
         ? `Se generará solo para: ${d.containmentTargets.map((t) => TOOL_LABEL[t] ?? t).join(", ")}.`
         : "Sin herramientas marcadas: se generará para todas (firewall, nginx, Cloudflare)."),
       h("button", { class: "btn primary", disabled: !allIps.length && !allDomains.length, onclick: buildContain }, "Generar reglas de bloqueo"), containBox)),
-    panel("Informe", h("div", { class: "body stack" }, h("div", { class: "row" }, h("button", { class: "btn primary", onclick: () => buildReport("markdown") }, "Ver informe (Markdown)"), h("button", { class: "btn", onclick: () => buildReport("json") }, "Ver informe (JSON)"), h("a", { class: "btn", href: `/api/incidents/${id}/report?format=pdf`, target: "_blank" }, "Descargar PDF")), reportBox))) };
+    panel("Informe", h("div", { class: "body stack" }, h("div", { class: "row" }, h("button", { class: "btn primary", onclick: () => buildReport("markdown") }, "Ver informe (Markdown)"), h("button", { class: "btn", onclick: () => buildReport("json") }, "Ver informe (JSON)"), h("a", { class: "btn", href: `/api/incidents/${id}/report?format=pdf`, target: "_blank" }, "Descargar PDF")), reportBox)));
+  return { crumb: `Incidentes › ${d.organization}`, title: d.organization, node: h("div", { class: "stack" },
+    h("div", { class: "page-head" }, h("div", {}, h("h1", {}, d.organization), h("p", { class: "row" }, seal(STATUS[d.status] ?? d.status, STATUS_TONE[d.status]), h("span", { class: "muted" }, `Abierto ${fmtDate(d.createdAt)} por ${d.createdBy}`)))),
+    !closed ? h("div", { class: "detail-layout" }, main, h("div", { class: "ai-side" }, aiPanel())) : main) };
 }

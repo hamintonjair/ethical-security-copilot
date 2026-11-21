@@ -44,11 +44,14 @@ export async function assessmentView(ctx, id, tab = "resumen") {
     hallazgos: () => findingsTab(ctx, d, reload), cadena: () => supplyChainTab(ctx, d, reload), informe: () => reportTab(ctx, d) }[tab] ?? (() => summary(d)))();
   const tabCount = { planes: d.plans.filter((p) => p.status === "pending_approval").length, hallazgos: d.findings.length };
 
+  const main = h("div", { class: "stack" },
+    h("div", { class: "tabs", role: "tablist" }, TABS.map(([k, l]) => h("button", { role: "tab", "aria-selected": String(k === tab), onclick: () => ctx.go(`#/evaluaciones/${id}/${k}`) }, l, tabCount[k] ? ` (${tabCount[k]})` : ""))),
+    body);
+  const showAi = ctx.can("findings");
   const node = h("div", { class: "stack" },
     h("div", { class: "page-head" }, h("div", {}, h("h1", {}, d.name), h("p", { class: "row" }, stateSeal(d.state), seal(`Versión ${d.version}`, "mute"),
       d.signatureValid ? seal("Firma válida", "ok") : seal("Firma NO válida", "bad")))),
-    h("div", { class: "tabs", role: "tablist" }, TABS.map(([k, l]) => h("button", { role: "tab", "aria-selected": String(k === tab), onclick: () => ctx.go(`#/evaluaciones/${id}/${k}`) }, l, tabCount[k] ? ` (${tabCount[k]})` : ""))),
-    body);
+    showAi ? h("div", { class: "detail-layout" }, main, h("div", { class: "ai-side" }, aiAssistPanel(ctx, d, reload))) : main);
   return { crumb: `Evaluaciones › ${d.name}`, title: d.name, node };
 }
 
@@ -121,8 +124,7 @@ function findingsTab(ctx, d, reload) {
       h("div", { class: "cols" }, h("div", {}, h("h3", {}, "Impacto de negocio"), h("p", {}, x.businessImpact)), h("div", {}, h("h3", {}, "Recomendación"), h("p", {}, x.recommendation)))))) : [empty("Sin hallazgos", "Los hallazgos aparecen aquí cuando el agente o un analista los registran.")];
   return h("div", { class: "stack" },
     panel("Hallazgos", h("div", {}, list), canWrite ? h("button", { class: "btn small primary", disabled: !open, title: open ? "" : "Disponible cuando la evaluación ya tuvo ejecuciones", onclick: () => { formBox.replaceChildren(findingForm(d, () => reload())); formBox.scrollIntoView({ block: "start" }); } }, "Registrar hallazgo") : null),
-    formBox, canWrite && !open ? h("p", { class: "hint" }, "Se pueden registrar hallazgos cuando la evaluación ya tuvo ejecuciones (estado «En ejecución» o posterior).") : null,
-    canWrite ? aiAssistPanel(ctx, d, reload) : null);
+    formBox, canWrite && !open ? h("p", { class: "hint" }, "Se pueden registrar hallazgos cuando la evaluación ya tuvo ejecuciones (estado «En ejecución» o posterior).") : null);
 }
 
 function aiAssistPanel(ctx, d, reload) {
@@ -141,17 +143,22 @@ function aiAssistPanel(ctx, d, reload) {
       const actionNodes = r.actions.map((a) => {
         if (a.result?.findingId) return h("p", {}, `✓ Hallazgo registrado (id ${a.result.findingId}).`);
         if (a.result?.text) return h("div", { class: "stack" }, h("strong", {}, "Borrador de informe:"), h("pre", { class: "report" }, a.result.text));
+        if (a.tool === "scope_validate") return h("p", {}, a.result?.authorized ? "✓ Target autorizado por el alcance." : `✗ Target NO autorizado${a.result?.reasons?.length ? ": " + a.result.reasons.join(", ") : ""}.`);
+        if (a.tool === "scan_initiate" && a.result?.status === "pending_approval") return h("p", {}, `⏳ Plan pendiente de aprobación humana (id ${a.result.planId}). Un operator debe aprobarlo aparte y entregar el token.`);
+        if (a.tool === "scan_initiate" && a.result?.status) return h("div", { class: "stack" }, h("strong", {}, `Módulo: ${a.result.status}`), h("p", { class: "muted" }, `${a.result.facts?.length ?? 0} hecho(s), ${a.result.denials?.length ?? 0} denegación(es).`));
+        if (a.tool === "scan_stop") return h("p", {}, `🛑 Kill switch activado. Ejecuciones abortadas: ${a.result?.abortedRuns ?? 0}.`);
+        if (a.tool === "supply_chain_analyze" && a.result?.dependencies != null) return h("p", {}, `${a.result.dependencies} dependencia(s) analizadas, ${a.result.vulnerable} con vulnerabilidades conocidas.`);
         if (a.result?.error) return h("p", { class: "err" }, `${a.result.error}${a.result.message ? ": " + a.result.message : ""}`);
         return null;
       }).filter(Boolean);
       history.append(aiMsgCard(q.value, md(r.answer), r.createdAt ? fmtDate(r.createdAt) : "", actionNodes));
       history.scrollIntoView({ block: "end" });
       q.value = "";
-      if (r.actions.some((a) => a.result?.findingId)) reload();
+      if (r.actions.some((a) => a.result?.findingId || a.tool === "scan_initiate" || a.tool === "scan_stop")) reload();
     } catch (e) { status.replaceChildren(h("p", { class: "err" }, e.message)); }
   };
   return panel("Asistente de IA", h("div", { class: "body stack" },
-    h("p", { class: "muted" }, "Usa el modelo configurado por tu organización. Puede registrar hallazgos y redactar el informe (en borrador, sin cerrar el ciclo); nunca lanza un módulo contra una red real ni aprueba ningún plan."),
+    h("p", { class: "muted" }, "Usa el modelo configurado por tu organización, con los mismos permisos que ya tiene por MCP: puede validar alcance, registrar hallazgos, redactar el informe, analizar cadena de suministro y lanzar módulos — en modo activo (o si el módulo cambia estado) sigue pidiendo primero la aprobación humana de un plan, igual que por MCP o por la consola. Nunca abre ni cierra la evaluación."),
     history, q, h("button", { class: "btn primary", onclick: ask }, "Preguntar a la IA"), status));
 }
 

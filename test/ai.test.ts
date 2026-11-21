@@ -178,6 +178,107 @@ test("IA en Evaluaciones: puede registrar un hallazgo y redactar un informe, nun
   await freshStore.close();
 });
 
+test("IA en Evaluaciones: valida alcance y lanza un módulo pasivo directo, solo cuando el humano lo pide explícitamente", async () => {
+  const freshStore = await Store.open("memory", KEY);
+  await freshStore.setAiConfig({ enabled: true, provider: "anthropic", model: "claude-test", apiKey: "sk-ant-test-key" }, "ana");
+  const a = await freshStore.createAssessment(assessmentInput({ allowedModules: ["config_audit"] }), "ana");
+  for (const s of ["scope_validated", "planned", "approved"] as const) await freshStore.transition(a.id, s, "ana", "authorizer");
+
+  let call = 0;
+  const fetchImpl = (async () => {
+    call++;
+    if (call === 1) {
+      return new Response(JSON.stringify({ stop_reason: "tool_use", content: [
+        { type: "text", text: "Primero confirmo que el target está en el alcance." },
+        { type: "tool_use", id: "t1", name: "scope_validate", input: { target: { type: "cidr", value: "203.0.113.0/24" } } },
+      ] }), { status: 200 });
+    }
+    if (call === 2) {
+      return new Response(JSON.stringify({ stop_reason: "tool_use", content: [
+        { type: "text", text: "Está en el alcance; lanzo el análisis pasivo que pediste." },
+        { type: "tool_use", id: "t2", name: "scan_initiate", input: { moduleId: "config_audit", mode: "passive", targets: [{ type: "ip", value: "203.0.113.5" }], params: { content: "server_tokens on" } } },
+      ] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ stop_reason: "end_turn", content: [{ type: "text", text: "Listo: encontré configuración insegura." }] }), { status: 200 });
+  }) as typeof fetch;
+
+  const r = await runAssessmentAssistant({ store: freshStore, assessmentId: a.id, question: "ejecuta config_audit sobre 203.0.113.5 con ese contenido", requestedBy: "omar", fetchImpl });
+  assert.ok(!("error" in r), JSON.stringify(r));
+  if ("error" in r) throw new Error("unreachable");
+  assert.equal(r.actions.length, 2);
+  assert.equal(r.actions[0].tool, "scope_validate");
+  assert.equal((r.actions[0].result as any).authorized, true);
+  assert.equal(r.actions[1].tool, "scan_initiate");
+  assert.equal((r.actions[1].result as any).status, "completed");
+  assert.ok((r.actions[1].result as any).facts.some((f: string) => /revela su versión/.test(f)));
+
+  const audit = await freshStore.listAudit(10, 0);
+  const entry = audit.rows.find((x) => x.action === "scan:finished");
+  assert.equal(entry?.actor, "ia-modulo:omar");
+  assert.equal(entry?.role, "agent");
+  await freshStore.close();
+});
+
+test("IA en Evaluaciones: en modo activo (o módulo que cambia estado) no ejecuta nada hasta que un humano apruebe el plan", async () => {
+  const freshStore = await Store.open("memory", KEY);
+  await freshStore.setAiConfig({ enabled: true, provider: "anthropic", model: "claude-test", apiKey: "sk-ant-test-key" }, "ana");
+  const a = await freshStore.createAssessment(assessmentInput({ allowedModules: ["tcp_port_check"] }), "ana");
+  for (const s of ["scope_validated", "planned", "approved"] as const) await freshStore.transition(a.id, s, "ana", "authorizer");
+
+  let call = 0;
+  const fetchImpl = (async () => {
+    call++;
+    if (call === 1) {
+      return new Response(JSON.stringify({ stop_reason: "tool_use", content: [
+        { type: "text", text: "Lanzo el escaneo activo que pediste." },
+        { type: "tool_use", id: "t1", name: "scan_initiate", input: { moduleId: "tcp_port_check", mode: "active", targets: [{ type: "ip", value: "203.0.113.5" }], params: { ports: "80" } } },
+      ] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ stop_reason: "end_turn", content: [{ type: "text", text: "Queda un plan pendiente de aprobación humana; avísame cuando lo apruebes." }] }), { status: 200 });
+  }) as typeof fetch;
+
+  const r = await runAssessmentAssistant({ store: freshStore, assessmentId: a.id, question: "lanza un escaneo activo de puertos contra 203.0.113.5", requestedBy: "omar", fetchImpl });
+  assert.ok(!("error" in r), JSON.stringify(r));
+  if ("error" in r) throw new Error("unreachable");
+  assert.equal(r.actions.length, 1);
+  const result = r.actions[0].result as any;
+  assert.equal(result.status, "pending_approval");
+  assert.ok(result.planId);
+
+  const plans = await freshStore.listPlans();
+  assert.equal(plans.length, 1);
+  assert.equal(plans[0].status, "pending_approval");
+  await freshStore.close();
+});
+
+test("IA en Evaluaciones: scan_stop activa el kill switch y lo deja registrado como actor del módulo de IA", async () => {
+  const freshStore = await Store.open("memory", KEY);
+  await freshStore.setAiConfig({ enabled: true, provider: "anthropic", model: "claude-test", apiKey: "sk-ant-test-key" }, "ana");
+  const a = await freshStore.createAssessment(assessmentInput(), "ana");
+
+  let call = 0;
+  const fetchImpl = (async () => {
+    call++;
+    if (call === 1) {
+      return new Response(JSON.stringify({ stop_reason: "tool_use", content: [
+        { type: "text", text: "Detengo todo de inmediato." },
+        { type: "tool_use", id: "t1", name: "scan_stop", input: { reason: "el humano pidió detener todo ya" } },
+      ] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ stop_reason: "end_turn", content: [{ type: "text", text: "Listo, todo detenido." }] }), { status: 200 });
+  }) as typeof fetch;
+
+  const r = await runAssessmentAssistant({ store: freshStore, assessmentId: a.id, question: "detén todo ahora mismo", requestedBy: "ana", fetchImpl });
+  assert.ok(!("error" in r), JSON.stringify(r));
+  if ("error" in r) throw new Error("unreachable");
+  assert.equal(r.actions.length, 1);
+  assert.equal((r.actions[0].result as any).killSwitch, "active");
+  const info = await freshStore.killSwitchInfo();
+  assert.equal(info.active, true);
+  assert.equal(info.reason, "el humano pidió detener todo ya");
+  await freshStore.close();
+});
+
 /* =========================== Multi-proveedor: no tiene que ser Anthropic =========================== */
 
 test("listModels: Anthropic — llama a /models con x-api-key y devuelve id+label", async () => {

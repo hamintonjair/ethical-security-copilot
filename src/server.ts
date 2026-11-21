@@ -7,14 +7,13 @@ import {
 } from "./schemas.js";
 import { Store } from "./store.js";
 import { PolicyEngine } from "./policy.js";
-import { Gateway, GatewayDenied } from "./gateway.js";
+import { Gateway } from "./gateway.js";
 import { builtinModules, type Module } from "./modules.js";
 import { broadScopeProblem, type Target } from "./scope.js";
-import { canonical } from "./crypto.js";
 import { redact } from "./redact.js";
-import type { State } from "./state.js";
 import { createFinding } from "./findings.js";
 import { buildReport } from "./report.js";
+import { runScanInitiate, runScanStop } from "./scan.js";
 import { analyzeLog, analyzeEmailHeaders, containmentRules, buildIncidentReport, suggestIncidentTypes, TYPE_GUIDANCE, MAX_EVIDENCE_CHARS } from "./incident.js";
 import { parseManifest, checkVulnerabilities, MAX_MANIFEST_CHARS } from "./supplychain.js";
 
@@ -69,61 +68,9 @@ export function createServer(deps: ServerDeps) {
     inputSchema: { ...ScanInitiateIn.shape, planId: z.string().uuid().optional(), approvalToken: z.string().optional() },
   }, async ({ assessmentId, moduleId, mode, targets, params, planId, approvalToken }) => {
     const d = await allowed("scan_initiate", assessmentId); if (d) return d;
-    const mod = modules.get(moduleId);
-    if (!mod) return json({ error: "MODULE_NOT_FOUND" }, true);
-    const rec = await store.getAssessment(assessmentId);
-    if (!rec) return json({ error: "NO_ACTIVE_ASSESSMENT" }, true);
-    const needsApproval = mode === "active" || mod.manifest.changesState;
-    const limits = { maxRequestsPerSecond: rec.a.window.maxRequestsPerSecond, maxConcurrency: rec.a.window.maxConcurrency, notAfter: rec.a.window.notAfter, timeoutSec: mod.manifest.runner.timeoutSec };
-
-    // Todos los targets deben estar autorizados ANTES de planificar o ejecutar
-    for (const t of targets as Target[]) {
-      const v = await policy.validateScope(assessmentId, t, role);
-      if (!v.authorized) { await store.audit({ actor, role, action: "scan_refused", assessmentId, payload: { moduleId, target: t, reasons: v.reasons } }); return json({ status: "denied", target: t, reasons: v.reasons }, true); }
-    }
-
-    if (needsApproval && !planId) {
-      const id = await store.createPlan({ assessmentId, moduleId, mode, targets, limits });
-      await store.audit({ actor, role, action: "plan:created", assessmentId, payload: { planId: id, moduleId, mode } });
-      return json({ status: "pending_approval", planId: id, plan: { module: moduleId, mode, targets, limits, changesState: mod.manifest.changesState }, next: "Un humano (operator) debe aprobar este plan con el CLI y entregar el token de un solo uso." });
-    }
-    if (planId) {
-      const plan = await store.getPlan(planId);
-      const planned = (plan?.targets ?? []).map((t: unknown) => canonical(t));
-      if (!plan || plan.assessment_id !== assessmentId || plan.module_id !== moduleId || plan.mode !== mode || !(targets as Target[]).every(t => planned.includes(canonical(t))))
-        return json({ status: "denied", reasons: ["APPROVAL_REQUIRED"], message: "El plan no coincide con lo solicitado." }, true);
-    }
-
-    const ctrl = new AbortController(); const runId = crypto.randomUUID();
-    running.set(runId, { assessmentId, ctrl });
-    const signal = AbortSignal.any([ctrl.signal, AbortSignal.timeout(mod.manifest.runner.timeoutSec * 1000)]);
-    const facts: string[] = []; const suggestions: unknown[] = []; const denials: unknown[] = [];
-    try {
-      let first = true;
-      for (const target of targets as Target[]) {
-        if (signal.aborted) break;
-        const req = { assessmentId, actor: role, mode, module: moduleId, target, changesState: mod.manifest.changesState, params };
-        const admit = first && needsApproval ? () => policy.check({ ...req, planId, approvalToken }) : first ? () => policy.check(req) : () => policy.recheck(req);
-        first = false;
-        // Igual que el Gateway: si solo falla por ritmo, se espera y se reintenta en vez de negar la operación.
-        let dec = await admit();
-        for (let i = 0; !dec.allow && dec.reasons.length === 1 && dec.reasons[0] === "RATE_LIMIT" && i < 60 && !signal.aborted; i++) { await new Promise(r => setTimeout(r, 200)); dec = await admit(); }
-        if (!dec.allow) { denials.push({ target, reasons: dec.reasons }); continue; }
-        const st = (await store.getAssessment(assessmentId))!.a.state as State;
-        if (st === "approved") await store.transition(assessmentId, "executing", actor, role);
-        try {
-          const r = await mod.run({ grant: { assessmentId, mode, actor: role as any, module: moduleId }, gateway, target, params, signal, maxConcurrency: rec.a.window.maxConcurrency });
-          facts.push(...r.facts); suggestions.push(...r.suggestions);
-        } catch (e) {
-          if (e instanceof GatewayDenied) denials.push({ target, reasons: e.reasons });
-          else denials.push({ target, error: signal.aborted ? "ABORTED_OR_TIMEOUT" : (e as Error).message });
-        }
-      }
-    } finally { running.delete(runId); }
-
-    const out = { status: signal.aborted ? "aborted" : denials.length && !facts.length ? "denied" : "completed", facts: facts.slice(0, 200).map(f => redact(f, 500)), suggestions: suggestions.slice(0, 100), denials };
-    await store.audit({ actor, role, action: "scan:finished", assessmentId, payload: { moduleId, mode, status: out.status, facts: facts.length, denials: denials.length } });
-    return json(out, out.status === "denied");
+    const r = await runScanInitiate({ store, policy, gateway, modules, running }, role, actor, { assessmentId, moduleId, mode, targets: targets as Target[], params, planId, approvalToken });
+    if ("error" in r) return json(r, true);
+    return json(r, r.status === "denied");
   });
 
   /* 4. scan_stop (kill switch) */
@@ -132,10 +79,7 @@ export function createServer(deps: ServerDeps) {
     inputSchema: ScanStopIn.shape,
   }, async ({ assessmentId, reason }) => {
     const d = await allowed("scan_stop", assessmentId); if (d) return d;
-    let n = 0;
-    for (const r of running.values()) if (!assessmentId || r.assessmentId === assessmentId) { r.ctrl.abort(); n++; }
-    await store.activateKillSwitch(reason, actor, role, assessmentId);
-    return json({ killSwitch: "active", abortedRuns: n, note: "Solo un authorizer humano puede liberarlo; la evaluación detenida requiere una nueva versión de la autorización." });
+    return json(await runScanStop({ store, running }, role, actor, assessmentId, reason));
   });
 
   /* 5. finding_create */

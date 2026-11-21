@@ -7,6 +7,13 @@ import { analyzeLog, analyzeEmailHeaders, containmentRules, buildIncidentReport,
 import { createFinding } from "./findings.js";
 import { buildReport } from "./report.js";
 import { redact } from "./redact.js";
+import { PolicyEngine } from "./policy.js";
+import { Gateway } from "./gateway.js";
+import { builtinModules, type Module } from "./modules.js";
+import type { Target } from "./scope.js";
+import { runScanInitiate, runScanStop } from "./scan.js";
+import type { RunRegistry } from "./server.js";
+import { parseManifest, checkVulnerabilities, MAX_MANIFEST_CHARS } from "./supplychain.js";
 
 export type Provider = "anthropic" | "openai" | "gemini";
 const MAX_ITERS = 4;
@@ -273,8 +280,10 @@ export async function runIncidentAssistant(opts: {
 }
 
 /* =========================== Evaluaciones ===========================
-   Deliberadamente no incluye scan_initiate: lanzar módulos contra sistemas reales sigue pasando
-   siempre por la aprobación humana de un plan, por MCP o por la consola — nunca por este asistente. */
+   El módulo de IA puede ahora también validar alcance, lanzar módulos (scan_initiate — sigue pasando
+   SIEMPRE por la misma aprobación humana de un plan con token de un solo uso que ya exige MCP/consola),
+   detener todo con el kill switch (scan_stop) y analizar cadena de suministro (supply_chain_analyze).
+   Es EXACTAMENTE el mismo conjunto que RolePermissions.agent ya tiene por MCP — ni una herramienta más. */
 
 const ASSESSMENT_TOOLS: ToolDef[] = [
   {
@@ -304,12 +313,61 @@ const ASSESSMENT_TOOLS: ToolDef[] = [
       includeStates: { type: "array", items: { type: "string", enum: ["confirmed", "unverified"] } },
     } },
   },
+  {
+    name: "scope_validate",
+    description: "Verifica si un target (ip, cidr, dominio, url o dispositivo) está autorizado por el alcance de la evaluación. Es solo una consulta: no ejecuta nada ni consume el presupuesto de ritmo.",
+    input_schema: { type: "object", properties: {
+      target: { type: "object", properties: {
+        type: { type: "string", enum: ["cidr", "ip", "domain", "url", "device"] },
+        value: { type: "string" },
+        includeSubdomains: { type: "boolean" },
+        pathPrefix: { type: "string" },
+      }, required: ["type", "value"] },
+    }, required: ["target"] },
+  },
+  {
+    name: "scan_initiate",
+    description: "Lanza un módulo (pasivo, laboratorio o activo) contra los targets dados. SOLO se debe llamar después de que el humano pida explícitamente en el chat que se ejecute ese módulo. En modo activo, o si el módulo cambia estado, esto NO ejecuta nada todavía: devuelve un plan pendiente de aprobación humana (planId) que un operator debe aprobar aparte, con un token de un solo uso; vuelve a llamar a esta misma herramienta con planId y approvalToken solo si el humano te entrega ese token.",
+    input_schema: { type: "object", properties: {
+      moduleId: { type: "string", description: "Identificador del módulo, p. ej. tcp_port_check, http_header_audit, config_audit." },
+      mode: { type: "string", enum: ["passive", "lab", "active"] },
+      targets: { type: "array", minItems: 1, items: { type: "object", properties: {
+        type: { type: "string", enum: ["cidr", "ip", "domain", "url", "device"] },
+        value: { type: "string" },
+        includeSubdomains: { type: "boolean" },
+        pathPrefix: { type: "string" },
+      }, required: ["type", "value"] } },
+      params: { type: "object", description: "Parámetros específicos del módulo (opcional)." },
+      planId: { type: "string", description: "Solo si el humano ya aprobó un plan pendiente y te dio este id." },
+      approvalToken: { type: "string", description: "Token de un solo uso que el humano recibió al aprobar el plan." },
+    }, required: ["moduleId", "mode", "targets"] },
+  },
+  {
+    name: "scan_stop",
+    description: "Kill switch: detiene de inmediato cualquier ejecución en curso de esta evaluación (o de todas, si no se da assessmentId) y bloquea nuevas hasta que un humano authorizer lo libere. Úsalo si el humano lo pide o ante cualquier señal de que algo salió mal.",
+    input_schema: { type: "object", properties: {
+      allAssessments: { type: "boolean", description: "true para detener TODO, no solo esta evaluación." },
+      reason: { type: "string", minLength: 3, maxLength: 300 },
+    }, required: ["reason"] },
+  },
+  {
+    name: "supply_chain_analyze",
+    description: "Analiza un manifiesto de dependencias que el humano pega (package-lock.json, package.json, requirements.txt, o una lista manual 'nombre@versión') y lo cruza con OSV.dev para detectar vulnerabilidades conocidas (A03). Solo lee el texto dado; no instala ni ejecuta nada.",
+    input_schema: { type: "object", properties: {
+      kind: { type: "string", enum: ["npm_package_lock", "npm_package_json", "pip_requirements", "manual"] },
+      content: { type: "string" },
+      osvEcosystem: { type: "string", description: "Solo para kind=manual, p. ej. Go, Maven, RubyGems, crates.io, Packagist, NuGet." },
+    }, required: ["kind", "content"] },
+  },
 ];
 
 export async function runAssessmentAssistant(opts: {
   store: Store; assessmentId: string; question: string; requestedBy: string; fetchImpl?: FetchFn;
+  policy?: PolicyEngine; gateway?: Gateway; modules?: Map<string, Module>; running?: RunRegistry;
 }): Promise<AiResult> {
   const { store, assessmentId, question, requestedBy } = opts;
+  const modules = opts.modules ?? builtinModules();
+  const running: RunRegistry = opts.running ?? new Map();
   const fetchImpl = opts.fetchImpl ?? fetch;
   const secret = await store.getAiSecret();
   if (!secret) return { error: "AI_NOT_CONFIGURED", message: "El módulo de IA no está activado o no tiene una llave de API guardada. Ve a Configuración → Integración IA." };
@@ -321,10 +379,19 @@ export async function runAssessmentAssistant(opts: {
     ? findings.map((f, i) => `${i + 1}. [${f.data.severity}/${f.data.triage}] ${f.data.title} — activo: ${f.data.asset} (CVSS ${f.data.cvssScore})`).join("\n")
     : "Sin hallazgos registrados todavía.";
   const system = `Eres el asistente de IA del módulo de Evaluaciones de "Ethical Security Copilot", dentro de la propia plataforma (no por MCP). ` +
-    `Ámbito estricto: solo puedes registrar hallazgos nuevos y generar el informe — NUNCA puedes lanzar un módulo contra una red real ni aprobar ningún plan; ` +
-    `eso siempre requiere la aprobación de un humano por la consola o por MCP. Separa siempre hechos observados (lo que se vio) de hipótesis de riesgo (lo que podría pasar, sin verificar). ` +
+    `Actúas con EXACTAMENTE los mismos permisos que el rol "agent" ya tiene por MCP: puedes validar alcance, lanzar módulos, detener todo con el kill switch, ` +
+    `analizar cadena de suministro, registrar hallazgos y generar el informe — nunca abres ni cierras la evaluación ni apruebas un plan tú mismo; eso siempre lo decide un humano. ` +
+    `"Cerrar el paso, no contraatacar": jamás propongas ni realices nada contra sistemas fuera del alcance autorizado. ` +
+    `IMPORTANTE sobre scan_initiate: SOLO llámala cuando el humano te pida explícitamente en el chat que ejecutes ese módulo contra esos targets — nunca por iniciativa propia ni como parte de una exploración. ` +
+    `En modo activo, o si el módulo cambia estado, la primera llamada no ejecuta nada: te devuelve un plan "pending_approval" que un humano (operator) debe aprobar aparte con un token de un solo uso; ` +
+    `dile eso al humano y espera — solo vuelves a llamar a scan_initiate con planId y approvalToken si el humano te los entrega después de aprobar el plan por su cuenta. ` +
+    `IMPORTANTE sobre scan_stop: úsala si el humano lo pide o ante cualquier señal de que algo salió mal; después de usarla, solo un authorizer humano puede liberar el kill switch. ` +
+    `Separa siempre hechos observados (lo que se vio) de hipótesis de riesgo (lo que podría pasar, sin verificar). ` +
     `La severidad debe corresponder a la banda CVSS (info 0, baja 0,1–3,9, media 4–6,9, alta 7–8,9, crítica 9–10). Responde siempre en español, de forma clara y profesional.\n\n` +
     `Evaluación: ${rec.a.name} — organización: ${rec.a.authorizer.organization}\nEstado: ${rec.a.state}\nAlcance: ${rec.a.scope.map(s => s.value).join(", ")}\n\nHallazgos actuales:\n${findingsSummary}`;
+
+  const policy = opts.policy ?? new PolicyEngine(store, { manifests: new Map([...modules].map(([k, m]) => [k, m.manifest])) });
+  const gateway = opts.gateway ?? new Gateway(policy);
 
   const execTool = async (name: string, input: Record<string, unknown>): Promise<unknown> => {
     const actor = aiActor(requestedBy);
@@ -337,6 +404,30 @@ export async function runAssessmentAssistant(opts: {
       const includeStates = Array.isArray(input.includeStates) && input.includeStates.length ? input.includeStates.map(String) : ["confirmed"];
       const r2 = await buildReport(store, { assessmentId, format: format as "markdown" | "json", includeStates, advance: false, actor, role: "agent" });
       return r2.ok ? { text: r2.text, findings: r2.findings } : { error: r2.error };
+    }
+    if (name === "scope_validate") {
+      return policy.validateScope(assessmentId, input.target as Target, "agent");
+    }
+    if (name === "scan_initiate") {
+      const r2 = await runScanInitiate({ store, policy, gateway, modules, running }, "agent", actor, {
+        assessmentId, moduleId: String(input.moduleId ?? ""), mode: (input.mode as "passive" | "lab" | "active") ?? "passive",
+        targets: (input.targets as Target[]) ?? [], params: input.params as Record<string, string | number | boolean> | undefined,
+        planId: input.planId ? String(input.planId) : undefined, approvalToken: input.approvalToken ? String(input.approvalToken) : undefined,
+      });
+      return r2;
+    }
+    if (name === "scan_stop") {
+      const r2 = await runScanStop({ store, running }, "agent", actor, input.allAssessments ? undefined : assessmentId, String(input.reason ?? "detenido desde el asistente de IA"));
+      return r2;
+    }
+    if (name === "supply_chain_analyze") {
+      const content = String(input.content ?? "").slice(0, MAX_MANIFEST_CHARS);
+      const kind = (["npm_package_lock", "npm_package_json", "pip_requirements", "manual"].includes(String(input.kind)) ? input.kind : "manual") as "npm_package_lock" | "npm_package_json" | "pip_requirements" | "manual";
+      let sbom; try { sbom = parseManifest(kind, content, input.osvEcosystem ? String(input.osvEcosystem) : undefined); } catch (e) { return { error: "MANIFEST_PARSE_ERROR", message: (e as Error).message }; }
+      let results; try { results = await checkVulnerabilities(sbom); } catch (e) { return { error: "OSV_UPSTREAM_ERROR", message: (e as Error).message }; }
+      const vulnerable = results.filter((r) => r.vulns.length);
+      await store.audit({ actor, role: "agent", action: "supply_chain:analyzed", assessmentId, payload: { kind, deps: sbom.length, vulnerable: vulnerable.length, via: "ai-module" } });
+      return { dependencies: sbom.length, vulnerable: vulnerable.length, results, note: "Es solo informativo: nada se registra como hallazgo automáticamente. Usa finding_create para los que decidas confirmar." };
     }
     return { error: `herramienta desconocida: ${name}` };
   };

@@ -59,6 +59,20 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .grow { flex: 1; }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 22px; }
 
+/* ---------- Panel lateral del asistente de IA (incidentes y evaluaciones) ---------- */
+.detail-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 380px); gap: 22px; align-items: start; }
+.ai-side { position: sticky; top: 78px; max-height: calc(100vh - 100px); display: flex; min-width: 0; }
+.ai-side > .panel { display: flex; flex-direction: column; min-height: 0; max-height: 100%; width: 100%; }
+.ai-side > .panel > .body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.ai-side .ai-history { flex: 1 1 auto; min-height: 80px; overflow-y: auto; padding-right: 2px; }
+.ai-side textarea { flex: none; }
+@media (max-width: 1080px) {
+  .detail-layout { grid-template-columns: 1fr; }
+  .ai-side { position: static; max-height: none; }
+  .ai-side > .panel { max-height: none; }
+  .ai-side .ai-history { max-height: 420px; }
+}
+
 /* ---------- Paneles y tablas ---------- */
 .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); }
 .panel > header { padding: 14px 18px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
