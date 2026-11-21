@@ -60,7 +60,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 22px; }
 
 /* ---------- Panel lateral del asistente de IA (incidentes y evaluaciones) ---------- */
-.detail-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 300px); gap: 18px; align-items: start; }
+/* Con panel de IA, la página usa todo el ancho: el panel queda pegado al borde derecho y es más ancho hacia la izquierda. */
+.content:has(.detail-layout) { max-width: none; }
+.detail-layout { display: grid; grid-template-columns: minmax(0, 1fr) clamp(340px, 30vw, 460px); gap: 22px; align-items: start; }
 .ai-side { position: sticky; top: 78px; max-height: calc(100vh - 100px); display: flex; min-width: 0; }
 .ai-side > .panel { display: flex; flex-direction: column; min-height: 0; max-height: 100%; width: 100%; }
 .ai-side > .panel > .body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
