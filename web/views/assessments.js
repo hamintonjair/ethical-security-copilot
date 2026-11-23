@@ -9,7 +9,7 @@ function assessmentAiCreatePanel(ctx) {
   if (!ctx.can("createAssessment")) return null;
   const draftHistory = [];
   const history = h("div", { class: "ai-history" });
-  const draftBox = h("div", {});
+  const draftBox = h("div", { class: "ai-draft" });
   const status = h("div", {});
   const q = h("textarea", { rows: 3, placeholder: "Describe la evaluación: nombre, organización y responsable que autoriza, qué quieres probar (alcance), desde cuándo hasta cuándo, y con qué módulos. Te pregunta lo que falte." });
   const aiMsgCard = (question, answerNode) => h("article", { class: "ai-msg" }, h("p", { class: "q" }, question), answerNode);
@@ -53,7 +53,7 @@ function assessmentAiCreatePanel(ctx) {
 
 export async function assessmentsView(ctx) {
   const list = await api("GET", "/api/assessments");
-  const node = h("div", { class: "stack" },
+  const main = h("div", { class: "stack" },
     h("div", { class: "page-head" }, h("div", {}, h("h1", {}, "Evaluaciones"), h("p", {}, "Cada evaluación es una autorización firmada: define qué se puede probar, cuándo y con qué límites.")),
       ctx.can("createAssessment") ? h("a", { class: "btn primary", href: "#/evaluaciones/nueva" }, "Nueva evaluación") : null),
     panel(null, list.length ? h("div", { class: "table-wrap" }, h("table", {},
@@ -62,9 +62,9 @@ export async function assessmentsView(ctx) {
         h("td", {}, h("a", { href: `#/evaluaciones/${a.id}` }, a.name)), h("td", {}, a.organization), h("td", {}, stateSeal(a.state)),
         h("td", {}, `${fmtDate(a.window.notBefore)} → ${fmtDate(a.window.notAfter)}`), h("td", {}, `v${a.version}`))))))
       : empty("Aún no hay evaluaciones", ctx.can("createAssessment") ? "Crea la primera para definir un alcance autorizado." : "Un autorizador debe crear la primera.",
-          ctx.can("createAssessment") ? h("a", { class: "btn primary", href: "#/evaluaciones/nueva" }, "Nueva evaluación") : null)),
-    assessmentAiCreatePanel(ctx));
-  return { crumb: "Evaluaciones", title: "Evaluaciones", node };
+          ctx.can("createAssessment") ? h("a", { class: "btn primary", href: "#/evaluaciones/nueva" }, "Nueva evaluación") : null)));
+  const aiSide = assessmentAiCreatePanel(ctx);
+  return { crumb: "Evaluaciones", title: "Evaluaciones", node: aiSide ? h("div", { class: "detail-layout" }, main, h("div", { class: "ai-side" }, aiSide)) : main };
 }
 
 export async function newAssessmentView(ctx) {

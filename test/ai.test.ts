@@ -315,9 +315,27 @@ test("listModels: Gemini — pasa la llave como query param y filtra por generat
 
 test("testApiKey: una llave inválida (401) se reporta como tal, sin importar el proveedor", async () => {
   const fetchImpl = (async () => new Response("no", { status: 401 })) as typeof fetch;
-  const r = await testApiKey("openai", "sk-mala", undefined, fetchImpl);
+  const r = await testApiKey("openai", "sk-mala", undefined, undefined, fetchImpl);
   assert.equal(r.ok, false);
   if (!r.ok) assert.match(r.message, /no es válida/);
+});
+
+test("testApiKey: sin modelo, solo valida la llave (no rompe el comportamiento previo)", async () => {
+  const fetchImpl = (async () => new Response(JSON.stringify({ data: [{ id: "gpt-4o" }] }), { status: 200 })) as typeof fetch;
+  const r = await testApiKey("openai", "sk-ok", undefined, undefined, fetchImpl);
+  assert.equal(r.ok, true);
+});
+
+test("testApiKey: llave válida pero modelo inexistente para esa llave — ya no pasa la prueba", async () => {
+  // Esto es justo el caso que antes se escapaba: /models respondía bien (la llave sirve), pero el
+  // modelo guardado no era válido para una llamada real — y el chat fallaba después, sin aviso previo.
+  const fetchImpl = (async (url: any) => {
+    if (String(url).includes("/models")) return new Response(JSON.stringify({ data: [{ id: "claude-sonnet-5-5" }] }), { status: 200 });
+    return new Response("not found", { status: 404 }); // /messages con un modelo que no existe para esta llave
+  }) as typeof fetch;
+  const r = await testApiKey("anthropic", "sk-ant-ok", undefined, "modelo-que-no-existe", fetchImpl);
+  assert.equal(r.ok, false);
+  if (!r.ok) { assert.match(r.message, /La llave funciona/); assert.match(r.message, /modelo-que-no-existe/); }
 });
 
 test("módulo de IA (Incidentes) también funciona con un proveedor compatible con OpenAI, no solo Anthropic", async () => {

@@ -428,12 +428,14 @@ export function createApi(ctx: ApiCtx) {
     let apiKey = typeof body.apiKey === "string" && body.apiKey ? body.apiKey : undefined;
     let provider = (typeof body.provider === "string" && body.provider ? body.provider : undefined) as Provider | undefined;
     let baseUrl = typeof body.baseUrl === "string" && body.baseUrl ? body.baseUrl : undefined;
+    let model = typeof body.model === "string" && body.model ? body.model : undefined;
     if (!apiKey) {
       const secret = await store.getAiSecret();
       if (!secret) throw new HttpError(400, "NO_KEY", "No hay una llave guardada ni se envió una para probar.");
       apiKey = secret.apiKey; provider = provider ?? (secret.provider as Provider); baseUrl = baseUrl ?? (secret.baseUrl ?? undefined);
+      model = model ?? secret.model;
     }
-    return testApiKey(provider ?? "anthropic", apiKey, baseUrl);
+    return testApiKey(provider ?? "anthropic", apiKey, baseUrl, model);
   });
 
   /* ---------- Alertas salientes (webhook) ----------

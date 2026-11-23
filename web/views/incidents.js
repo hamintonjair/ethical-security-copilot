@@ -48,7 +48,7 @@ function incidentAiCreatePanel(ctx) {
   if (!ctx.can("openIncident")) return null;
   const draftHistory = [];
   const history = h("div", { class: "ai-history" });
-  const draftBox = h("div", {});
+  const draftBox = h("div", { class: "ai-draft" });
   const status = h("div", {});
   const q = h("textarea", { rows: 3, placeholder: "Cuéntale qué está pasando: organización, quién reporta, correo de contacto y un resumen breve. Te pregunta lo que falte." });
   const aiMsgCard = (question, answerNode) => h("article", { class: "ai-msg" }, h("p", { class: "q" }, question), answerNode);
@@ -110,12 +110,13 @@ export async function incidentsView(ctx) {
   };
   const rows = list.map((i) => h("tr", {}, h("td", {}, h("a", { href: `#/incidentes/${i.id}` }, i.organization)), h("td", {}, i.summary.slice(0, 80)),
     h("td", {}, seal(STATUS[i.status] ?? i.status, STATUS_TONE[i.status])), h("td", {}, `${i.evidenceCount} evidencia(s)`), h("td", {}, fmtDate(i.createdAt))));
-  return { crumb: "Incidentes", title: "Incidentes", node: h("div", { class: "stack" },
+  const main = h("div", { class: "stack" },
     h("div", { class: "page-head" }, h("div", {}, h("h1", {}, "Incidentes"), h("p", {}, "Respuesta a Incidentes / Defensa Activa: cerrar el paso a un ataque en curso, en tus propios sistemas.")),
       ctx.can("openIncident") ? h("button", { class: "btn primary", onclick: open }, "Abrir incidente") : null),
     panel(null, list.length ? h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["Organización", "Resumen", "Estado", "Evidencia", "Abierto"].map((t) => h("th", {}, t)))), h("tbody", {}, rows)))
-      : empty("Sin incidentes", "Cuando algo esté pasando, abre un caso para analizar la evidencia y generar la contención.")),
-    incidentAiCreatePanel(ctx)) };
+      : empty("Sin incidentes", "Cuando algo esté pasando, abre un caso para analizar la evidencia y generar la contención.")));
+  const aiSide = incidentAiCreatePanel(ctx);
+  return { crumb: "Incidentes", title: "Incidentes", node: aiSide ? h("div", { class: "detail-layout" }, main, h("div", { class: "ai-side" }, aiSide)) : main };
 }
 
 export async function incidentView(ctx, id) {

@@ -69,11 +69,15 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .ai-side > .panel > .body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .ai-side .ai-history { flex: 1 1 auto; min-height: 80px; overflow-y: auto; padding-right: 2px; }
 .ai-side textarea { flex: none; }
+/* Chat de creación (listados de Incidentes/Evaluaciones): la tarjeta de borrador se desplaza aparte,
+   con scroll propio, para que el botón de confirmar nunca quede recortado por el panel angosto. */
+.ai-draft:not(:empty) { flex: none; overflow-y: auto; max-height: 42vh; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line, #cfd6de); }
 @media (max-width: 1080px) {
   .detail-layout { grid-template-columns: 1fr; }
   .ai-side { position: static; max-height: none; }
   .ai-side > .panel { max-height: none; }
   .ai-side .ai-history { max-height: 420px; }
+  .ai-draft:not(:empty) { max-height: none; }
 }
 
 /* ---------- Paneles y tablas ---------- */

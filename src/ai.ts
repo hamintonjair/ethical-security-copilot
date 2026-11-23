@@ -62,9 +62,19 @@ export async function listModels(provider: Provider, apiKey: string, baseUrl: st
     .map((m) => ({ id: m.name.replace(/^models\//, ""), label: m.displayName || m.name }));
 }
 
-export async function testApiKey(provider: Provider, apiKey: string, baseUrl: string | undefined, fetchImpl: FetchFn = fetch): Promise<{ ok: true } | { ok: false; message: string }> {
-  try { await listModels(provider, apiKey, baseUrl, fetchImpl); return { ok: true }; }
+/** Probar conexión: valida la llave (listando modelos) y, si se da un modelo, hace además una llamada real
+ * mínima con ESE modelo — el mismo camino que usan los chats. Antes solo se listaban modelos, así que una
+ * llave válida con un modelo inexistente o no habilitado para esa llave pasaba la prueba y luego fallaba
+ * igual en el chat real; con esto se detecta aquí, antes de que el humano llegue al chat. */
+export async function testApiKey(provider: Provider, apiKey: string, baseUrl: string | undefined, model?: string, fetchImpl: FetchFn = fetch): Promise<{ ok: true } | { ok: false; message: string }> {
+  try { await listModels(provider, apiKey, baseUrl, fetchImpl); }
   catch (e) { return { ok: false, message: (e as Error).message || "No se pudo contactar a la API." }; }
+  if (!model) return { ok: true };
+  try {
+    const r = await runAssistant({ provider, apiKey, model, baseUrl, system: "Responde solo con la palabra OK.", question: "Responde solo con la palabra OK, nada más.", tools: [], execTool: async () => ({}), fetchImpl });
+    if ("error" in r) return { ok: false, message: `La llave funciona, pero el modelo "${model}" no respondió: ${r.message}` };
+    return { ok: true };
+  } catch (e) { return { ok: false, message: `La llave funciona, pero el modelo "${model}" no respondió: ${(e as Error).message || "error desconocido"}` }; }
 }
 
 type RunOpts = {
@@ -89,7 +99,7 @@ async function runAnthropicLoop(opts: RunOpts): Promise<AiResult> {
       headers: { "x-api-key": opts.apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
       body: JSON.stringify({ model: opts.model, max_tokens: MAX_TOKENS, system: opts.system, messages, tools: opts.tools }),
     });
-    if (!res.ok) return { error: "AI_UPSTREAM_ERROR", message: `Anthropic respondió ${res.status}.` };
+    if (!res.ok) return { error: "AI_UPSTREAM_ERROR", message: `Anthropic respondió ${res.status}${res.status === 404 ? ` (revisa que el modelo "${opts.model}" exista y esté disponible para tu llave)` : ""}.` };
     const data = await res.json() as { content: Array<TextBlock | ToolUseBlock>; stop_reason: string };
     const toolUses = data.content.filter((b): b is ToolUseBlock => b.type === "tool_use");
     const text = data.content.filter((b): b is TextBlock => b.type === "text").map((b) => b.text).join("\n").trim();
@@ -119,7 +129,7 @@ async function runOpenAiLoop(opts: RunOpts): Promise<AiResult> {
       headers: { Authorization: `Bearer ${opts.apiKey}`, "content-type": "application/json" },
       body: JSON.stringify({ model: opts.model, max_tokens: MAX_TOKENS, messages, tools, tool_choice: "auto" }),
     });
-    if (!res.ok) return { error: "AI_UPSTREAM_ERROR", message: `La API respondió ${res.status}.` };
+    if (!res.ok) return { error: "AI_UPSTREAM_ERROR", message: `La API respondió ${res.status}${res.status === 404 ? ` (revisa que el modelo "${opts.model}" exista y esté disponible para tu llave)` : ""}.` };
     const data = await res.json() as { choices?: Array<{ message: Msg }> };
     const msg = data.choices?.[0]?.message;
     if (!msg) return { error: "AI_UPSTREAM_ERROR", message: "Respuesta vacía de la API." };
@@ -150,7 +160,7 @@ async function runGeminiLoop(opts: RunOpts): Promise<AiResult> {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ system_instruction: { parts: [{ text: opts.system }] }, contents, tools, generationConfig: { maxOutputTokens: MAX_TOKENS } }),
     });
-    if (!res.ok) return { error: "AI_UPSTREAM_ERROR", message: `Gemini respondió ${res.status}.` };
+    if (!res.ok) return { error: "AI_UPSTREAM_ERROR", message: `Gemini respondió ${res.status}${res.status === 404 ? ` (revisa que el modelo "${opts.model}" exista y esté disponible para tu llave)` : ""}.` };
     const data = await res.json() as { candidates?: Array<{ content: { parts: Part[] } }> };
     const parts = data.candidates?.[0]?.content?.parts ?? [];
     const calls = parts.filter((p) => p.functionCall);

@@ -133,7 +133,7 @@ export async function aiConfigView(ctx) {
   const test = async () => {
     testOut.textContent = "Probando…"; testOut.className = "muted";
     try {
-      const r = await api("POST", "/api/ai/config/test", { provider: provider.value, apiKey: apiKey.value.trim() || undefined, baseUrl: baseUrl.value.trim() || undefined });
+      const r = await api("POST", "/api/ai/config/test", { provider: provider.value, apiKey: apiKey.value.trim() || undefined, baseUrl: baseUrl.value.trim() || undefined, model: currentModel() || undefined });
       testOut.textContent = r.ok ? "✓ Conexión correcta." : `✗ ${r.message}`;
       testOut.className = r.ok ? "" : "err";
     } catch (e) { testOut.textContent = `✗ ${e.message}`; testOut.className = "err"; }
