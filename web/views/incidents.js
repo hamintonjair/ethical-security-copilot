@@ -40,6 +40,54 @@ const pickFrom = (options, title, intro, selected = []) => openDialog((close) =>
 const pickTypes = (title, intro, selected = []) => pickFrom(INCIDENT_TYPES, title, intro, selected);
 const pickTargets = (title, intro, selected = []) => pickFrom(CONTAINMENT_TOOLS, title, intro, selected);
 
+/** Chat para abrir un caso conversando. La IA solo arma un borrador (incident_draft); el caso lo abre
+ * el humano con un clic, que llama a la misma ruta de siempre. Al confirmar, esta conversación pasa
+ * a ser el historial de IA del caso nuevo, así que "continúa" sin cortes dentro de él. */
+function incidentAiCreatePanel(ctx) {
+  if (!ctx.aiEnabled) return panel("Abrir incidente con la IA", h("div", { class: "body" }, h("p", { class: "muted" }, "El módulo de IA no está activado. Un autorizador puede activarlo en Configuración → Integración IA.")));
+  if (!ctx.can("openIncident")) return null;
+  const draftHistory = [];
+  const history = h("div", { class: "ai-history" });
+  const draftBox = h("div", {});
+  const status = h("div", {});
+  const q = h("textarea", { rows: 3, placeholder: "Cuéntale qué está pasando: organización, quién reporta, correo de contacto y un resumen breve. Te pregunta lo que falte." });
+  const aiMsgCard = (question, answerNode) => h("article", { class: "ai-msg" }, h("p", { class: "q" }, question), answerNode);
+  const renderDraft = (draft) => {
+    const create = async () => {
+      try { const r = await api("POST", "/api/incidents", { ...draft, draftHistory }); toast("Caso abierto."); ctx.go(`#/incidentes/${r.id}`); }
+      catch (e) { toast(e.message, true); }
+    };
+    return panel("Borrador del caso", h("div", { class: "body stack" },
+      h("dl", { class: "facts" },
+        h("dt", {}, "Organización"), h("dd", {}, draft.organization),
+        h("dt", {}, "Quién reporta"), h("dd", {}, `${draft.contactName} · ${draft.contactEmail}`),
+        h("dt", {}, "Qué está pasando"), h("dd", {}, draft.summary),
+        ...(draft.affectedAssets?.length ? [h("dt", {}, "Activos afectados"), h("dd", {}, draft.affectedAssets.join(", "))] : []),
+        ...(draft.types?.length ? [h("dt", {}, "Tipo(s) de incidente"), h("dd", {}, draft.types.map((t) => TYPE_LABEL[t] ?? t).join(", "))] : []),
+        ...(draft.containmentTargets?.length ? [h("dt", {}, "Herramientas de bloqueo"), h("dd", {}, draft.containmentTargets.map((t) => TOOL_LABEL[t] ?? t).join(", "))] : [])),
+      h("p", { class: "muted" }, "Revísalo: el caso no se abre solo. Al confirmar se abre con estos datos y esta conversación queda como su historial de IA."),
+      h("button", { class: "btn primary", onclick: create }, "Confirmar y abrir el caso")));
+  };
+  const ask = async () => {
+    const question = q.value;
+    if (!question.trim()) return;
+    status.replaceChildren(h("p", { class: "muted" }, "Pensando…"));
+    try {
+      const r = await api("POST", "/api/incidents/ai-create", { question });
+      status.replaceChildren();
+      history.append(aiMsgCard(question, md(r.answer)));
+      draftHistory.push({ question, answer: r.answer });
+      const draftAction = r.actions.find((a) => a.tool === "incident_draft" && a.result?.draft);
+      if (draftAction) { draftBox.replaceChildren(renderDraft(draftAction.result.draft)); draftBox.scrollIntoView({ block: "start" }); }
+      else history.scrollIntoView({ block: "end" });
+      q.value = "";
+    } catch (e) { status.replaceChildren(h("p", { class: "err" }, e.message)); }
+  };
+  return panel("Abrir incidente con la IA", h("div", { class: "body stack" },
+    h("p", { class: "muted" }, "Describe lo que está pasando y arma el caso conversando. Nada se abre solo: tú confirmas el borrador antes."),
+    history, q, h("button", { class: "btn primary", onclick: ask }, "Enviar"), status, draftBox));
+}
+
 export async function incidentsView(ctx) {
   const list = await api("GET", "/api/incidents");
   const open = async () => {
@@ -66,7 +114,8 @@ export async function incidentsView(ctx) {
     h("div", { class: "page-head" }, h("div", {}, h("h1", {}, "Incidentes"), h("p", {}, "Respuesta a Incidentes / Defensa Activa: cerrar el paso a un ataque en curso, en tus propios sistemas.")),
       ctx.can("openIncident") ? h("button", { class: "btn primary", onclick: open }, "Abrir incidente") : null),
     panel(null, list.length ? h("div", { class: "table-wrap" }, h("table", {}, h("thead", {}, h("tr", {}, ["Organización", "Resumen", "Estado", "Evidencia", "Abierto"].map((t) => h("th", {}, t)))), h("tbody", {}, rows)))
-      : empty("Sin incidentes", "Cuando algo esté pasando, abre un caso para analizar la evidencia y generar la contención."))) };
+      : empty("Sin incidentes", "Cuando algo esté pasando, abre un caso para analizar la evidencia y generar la contención.")),
+    incidentAiCreatePanel(ctx)) };
 }
 
 export async function incidentView(ctx, id) {

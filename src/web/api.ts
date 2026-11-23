@@ -16,7 +16,7 @@ import { OAuth, OAuthError } from "../oauth.js";
 import { IncidentCreateIn, IncidentEvidenceIn, IncidentContainIn, IncidentTypesIn, IncidentTargetsIn, AiConfigIn, AiModelsIn, AiAssistIn, SupplyChainAnalyzeIn, AlertsConfigIn } from "../schemas.js";
 import { analyzeLog, analyzeEmailHeaders, containmentRules, buildIncidentReport, suggestIncidentTypes, TYPE_GUIDANCE, MAX_EVIDENCE_CHARS } from "../incident.js";
 import { parseManifest, checkVulnerabilities } from "../supplychain.js";
-import { runIncidentAssistant, runAssessmentAssistant, testApiKey, listModels, type Provider } from "../ai.js";
+import { runIncidentAssistant, runAssessmentAssistant, runIncidentDraftAssistant, runAssessmentDraftAssistant, aiActor, testApiKey, listModels, type Provider } from "../ai.js";
 import { sendAlertIfDue } from "../alerts.js";
 import { redact } from "../redact.js";
 import { markdownToPdf } from "../pdf.js";
@@ -103,6 +103,17 @@ export function createApi(ctx: ApiCtx) {
   const routes: Route[] = [];
   const route = (method: string, path: string, roles: WebRole[], h: Handler) => routes.push({ method, re: new RegExp(`^${path.replace(/:id/g, "([0-9a-fA-F-]{36})")}$`), roles, h });
   const who = (s: Session) => ({ actor: s.user.username, role: s.user.role as WebRole });
+  /** Traslada al caso recién creado el chat que ayudó a armar el borrador, para que "continúe" sin cortes.
+   * El caso lo abrió el humano (el clic que confirma el borrador); el historial solo deja constancia de
+   * qué conversación lo originó, con el actor marcado como módulo de IA, igual que el resto de acciones de IA. */
+  const saveDraftHistory = async (subjectType: "incident" | "assessment", subjectId: string, raw: unknown, username: string) => {
+    if (!Array.isArray(raw)) return;
+    for (const m of raw.slice(0, 20)) {
+      const q = m && typeof (m as any).question === "string" ? (m as any).question.slice(0, 4000) : null;
+      const a = m && typeof (m as any).answer === "string" ? (m as any).answer.slice(0, 8000) : null;
+      if (q && a) await store.addAiMessage(subjectType, subjectId, q, a, aiActor(username));
+    }
+  };
   const mustFind = async (id: string) => { const r = await store.getAssessment(id); if (!r) throw new HttpError(404, "NOT_FOUND", "La evaluación no existe."); return r; };
 
   /* ---------- Cuenta ---------- */
@@ -146,7 +157,14 @@ export function createApi(ctx: ApiCtx) {
   route("POST", "/api/assessments", CAN.createAssessment, async ({ s, body }) => {
     const a = await store.createAssessment(parseAssessment(body), s.user.username);
     await store.audit({ ...who(s), action: "assessment_create", assessmentId: a.id, payload: { name: a.name, version: a.version, scope: a.scope.length, via: "web" } });
+    await saveDraftHistory("assessment", a.id, (body as any).draftHistory, s.user.username);
     return { id: a.id, version: a.version, state: a.state };
+  });
+  route("POST", "/api/assessments/ai-create", CAN.createAssessment, async ({ s, body }) => {
+    const { question } = AiAssistIn.parse(body);
+    const r = await runAssessmentDraftAssistant({ store, question, requestedBy: s.user.username, modules });
+    if ("error" in r) throw new HttpError(400, r.error, r.message);
+    return r;
   });
 
   route("GET", "/api/assessments/:id", CAN.read, async ({ params }) => {
@@ -318,7 +336,14 @@ export function createApi(ctx: ApiCtx) {
   route("POST", "/api/incidents", CAN.openIncident, async ({ s, body }) => {
     const input = IncidentCreateIn.parse(body);
     const inc = await store.createIncident(input, s.user.username);
+    await saveDraftHistory("incident", inc.id, (body as any).draftHistory, s.user.username);
     return { id: inc.id };
+  });
+  route("POST", "/api/incidents/ai-create", CAN.openIncident, async ({ s, body }) => {
+    const { question } = AiAssistIn.parse(body);
+    const r = await runIncidentDraftAssistant({ store, question, requestedBy: s.user.username });
+    if ("error" in r) throw new HttpError(400, r.error, r.message);
+    return r;
   });
   const mustFindIncident = async (id: string) => { const r = await store.getIncident(id); if (!r) throw new HttpError(404, "NOT_FOUND", "El incidente no existe."); return r; };
   route("GET", "/api/incidents/:id", CAN.read, async ({ params }) => {

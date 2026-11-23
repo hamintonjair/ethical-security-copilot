@@ -366,3 +366,40 @@ test("consola web: puede lanzar un módulo pasivo directo y uno activo pide plan
   assert.equal((await alba.call("POST", "/api/scan/stop", { reason: "sin permiso" })).status, 403);
   assert.equal((await ana.call("POST", "/api/killswitch/release")).status, 200);
 });
+
+test("chat de creación: ai-create exige permiso y responde AI_NOT_CONFIGURED sin llave; al crear con draftHistory, el historial queda en el caso nuevo", async () => {
+  const ana = await as("ana"), alba = await as("alba"), omar = await as("omar");
+
+  // Sin AI configurada: 400 AI_NOT_CONFIGURED, no 500 ni intento de red.
+  const noAi = await ana.call("POST", "/api/incidents/ai-create", { question: "abramos un caso" });
+  assert.equal(noAi.status, 400);
+  assert.equal(noAi.json.error, "AI_NOT_CONFIGURED");
+  const noAiA = await ana.call("POST", "/api/assessments/ai-create", { question: "quiero crear una evaluación" });
+  assert.equal(noAiA.status, 400);
+  assert.equal(noAiA.json.error, "AI_NOT_CONFIGURED");
+
+  // Solo quien puede abrir incidentes / crear evaluaciones puede usar el chat de creación correspondiente.
+  assert.equal((await alba.call("POST", "/api/incidents/ai-create", { question: "x" })).status, 403); // analyst no abre incidentes
+  assert.equal((await omar.call("POST", "/api/assessments/ai-create", { question: "x" })).status, 403); // operator no crea evaluaciones
+
+  // El caso lo abre el humano con su propio clic (ruta de siempre); el chat de creación solo aporta el historial.
+  const draftHistory = [{ question: "Jojama recibió un phishing bancario, reporta Hamilton (ham@jojama.test)", answer: "Armo el borrador: revisa los datos y confírmalos." }];
+  const open = await ana.call("POST", "/api/incidents", { organization: "Jojama", contactName: "Hamilton", contactEmail: "ham@jojama.test", summary: "Correo de phishing bancario.", draftHistory });
+  assert.equal(open.status, 200, JSON.stringify(open.json));
+  const detail = await ana.call("GET", `/api/incidents/${open.json.id}`);
+  assert.equal(detail.json.aiMessages.length, 1);
+  assert.equal(detail.json.aiMessages[0].question, draftHistory[0].question);
+  assert.equal(detail.json.aiMessages[0].actor, "ia-modulo:ana"); // marcado como originado en el chat de IA, no como acción directa de ana
+
+  const a = await ana.call("POST", "/api/assessments", { ...newAssessment(), draftHistory: [{ question: "quiero evaluar 203.0.113.0/24", answer: "Armo el borrador." }] });
+  assert.equal(a.status, 200, JSON.stringify(a.json));
+  const detailA = await ana.call("GET", `/api/assessments/${a.json.id}`);
+  assert.equal(detailA.json.aiMessages.length, 1);
+  assert.equal(detailA.json.aiMessages[0].actor, "ia-modulo:ana");
+
+  // Entradas basura en draftHistory se ignoran sin romper la creación.
+  const open2 = await ana.call("POST", "/api/incidents", { organization: "Otra", contactName: "B", contactEmail: "b@demo.test", summary: "otro caso cualquiera", draftHistory: [{ question: 1 }, "no es un objeto", { question: "q", answer: "a" }] });
+  assert.equal(open2.status, 200, JSON.stringify(open2.json));
+  const detail2 = await ana.call("GET", `/api/incidents/${open2.json.id}`);
+  assert.equal(detail2.json.aiMessages.length, 1);
+});

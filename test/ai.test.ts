@@ -6,7 +6,7 @@ import { Store } from "../src/store.js";
 import { Auth } from "../src/web/auth.js";
 import { createHttpApp } from "../src/http.js";
 import { encryptSecret, decryptSecret } from "../src/crypto.js";
-import { runIncidentAssistant, runAssessmentAssistant, listModels, testApiKey } from "../src/ai.js";
+import { runIncidentAssistant, runAssessmentAssistant, runIncidentDraftAssistant, runAssessmentDraftAssistant, listModels, testApiKey } from "../src/ai.js";
 
 const assessmentInput = (over: Record<string, unknown> = {}) => ({
   name: "Evaluación de prueba IA",
@@ -369,5 +369,77 @@ test("módulo de IA (Incidentes) también funciona con Gemini", async () => {
   assert.match(r.answer, /bloquea/);
   assert.equal(r.actions.length, 1);
   assert.equal(r.actions[0].tool, "incident_contain_plan");
+  await freshStore.close();
+});
+
+/* ---------- Chat de creación: solo arma un borrador, nunca abre el caso ni crea la evaluación ---------- */
+
+test("IA (chat de creación de incidente): arma el borrador pero no abre ningún caso", async () => {
+  const freshStore = await Store.open("memory", KEY);
+  await freshStore.setAiConfig({ enabled: true, provider: "anthropic", model: "claude-test", apiKey: "sk-ant-test-key" }, "ana");
+
+  let call = 0;
+  const fetchImpl = (async () => {
+    call++;
+    if (call === 1) {
+      return new Response(JSON.stringify({ stop_reason: "tool_use", content: [
+        { type: "text", text: "Armo el borrador." },
+        { type: "tool_use", id: "t1", name: "incident_draft", input: {
+          organization: "Jojama", contactName: "Hamilton", contactEmail: "ham@jojama.test",
+          summary: "Correo de phishing bancario recibido.",
+        } },
+      ] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ stop_reason: "end_turn", content: [{ type: "text", text: "Revisa el borrador y confírmalo." }] }), { status: 200 });
+  }) as typeof fetch;
+
+  const r = await runIncidentDraftAssistant({ store: freshStore, question: "Jojama recibió un correo de phishing bancario, reporta Hamilton (ham@jojama.test)", requestedBy: "omar", fetchImpl });
+  assert.ok(!("error" in r), JSON.stringify(r));
+  if ("error" in r) throw new Error("unreachable");
+  assert.match(r.answer, /confírmalo/);
+  assert.equal(r.actions.length, 1);
+  assert.equal(r.actions[0].tool, "incident_draft");
+  assert.equal((r.actions[0].result as any).draft.organization, "Jojama");
+  assert.equal((await freshStore.listIncidents()).length, 0); // nada se abrió solo
+  await freshStore.close();
+});
+
+test("IA (chat de creación de incidente): sin llave configurada, responde AI_NOT_CONFIGURED", async () => {
+  const freshStore = await Store.open("memory", KEY);
+  const r = await runIncidentDraftAssistant({ store: freshStore, question: "abramos un caso", requestedBy: "omar" });
+  assert.ok("error" in r && r.error === "AI_NOT_CONFIGURED");
+  await freshStore.close();
+});
+
+test("IA (chat de creación de evaluación): arma el borrador pero no crea nada", async () => {
+  const freshStore = await Store.open("memory", KEY);
+  await freshStore.setAiConfig({ enabled: true, provider: "anthropic", model: "claude-test", apiKey: "sk-ant-test-key" }, "ana");
+
+  let call = 0;
+  const fetchImpl = (async () => {
+    call++;
+    if (call === 1) {
+      return new Response(JSON.stringify({ stop_reason: "tool_use", content: [
+        { type: "text", text: "Armo el borrador." },
+        { type: "tool_use", id: "t1", name: "assessment_draft", input: {
+          name: "Evaluación Jojama",
+          authorizer: { organization: "Jojama", name: "Hamilton", email: "ham@jojama.test", emergencyContact: "+57 300 000 0000" },
+          allowedModes: ["passive"],
+          scope: [{ type: "cidr", value: "203.0.113.0/24" }],
+          window: { notBefore: "2026-11-01T00:00:00Z", notAfter: "2026-12-01T00:00:00Z", maxRequestsPerSecond: 5, maxConcurrency: 2 },
+          allowedModules: ["config_audit"],
+        } },
+      ] }), { status: 200 });
+    }
+    return new Response(JSON.stringify({ stop_reason: "end_turn", content: [{ type: "text", text: "Revisa el borrador y confírmalo." }] }), { status: 200 });
+  }) as typeof fetch;
+
+  const r = await runAssessmentDraftAssistant({ store: freshStore, question: "quiero evaluar 203.0.113.0/24 para Jojama, autoriza Hamilton", requestedBy: "omar", fetchImpl });
+  assert.ok(!("error" in r), JSON.stringify(r));
+  if ("error" in r) throw new Error("unreachable");
+  assert.equal(r.actions.length, 1);
+  assert.equal(r.actions[0].tool, "assessment_draft");
+  assert.equal((r.actions[0].result as any).draft.name, "Evaluación Jojama");
+  assert.equal((await freshStore.listAssessments()).length, 0); // nada se creó solo
   await freshStore.close();
 });

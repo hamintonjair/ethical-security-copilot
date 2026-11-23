@@ -14,6 +14,7 @@ import type { Target } from "./scope.js";
 import { runScanInitiate, runScanStop } from "./scan.js";
 import type { RunRegistry } from "./server.js";
 import { parseManifest, checkVulnerabilities, MAX_MANIFEST_CHARS } from "./supplychain.js";
+import { IncidentCreateIn, AssessmentCreateIn } from "./schemas.js";
 
 export type Provider = "anthropic" | "openai" | "gemini";
 const MAX_ITERS = 4;
@@ -433,4 +434,103 @@ export async function runAssessmentAssistant(opts: {
   };
 
   return runAssistant({ provider: secret.provider as Provider, apiKey: secret.apiKey, model: secret.model, baseUrl: secret.baseUrl, system, question, tools: ASSESSMENT_TOOLS, execTool, fetchImpl });
+}
+
+/* =========================== Chat de creación (antes de que exista el caso) ===========================
+   Por diseño, ni incident_open ni assessment_create están en RolePermissions.agent: abrir un caso o crear
+   una autorización lo decide siempre un humano, nunca la IA por su cuenta (ver RolePermissions en schemas.ts
+   y los comentarios en server.ts). Este chat NO rompe esa regla: solo conversa para reunir los datos y arma
+   un BORRADOR; quien efectivamente crea el caso es el humano, con un clic que llama a la misma ruta humana
+   (POST /api/incidents o /api/assessments) que ya exige el rol correspondiente. Una vez creado, la propia
+   conversación de este chat se traslada como historial al caso nuevo, para "continuar" sin cortes. */
+
+const INCIDENT_DRAFT_TOOLS: ToolDef[] = [
+  {
+    name: "incident_draft",
+    description: "Arma el BORRADOR del caso con los datos ya reunidos en la conversación. NO abre el caso. Llámala solo cuando el humano ya haya dado, y tú tengas claros: organización, quién reporta, correo de contacto y qué está pasando (resumen). No inventes ningún dato que falte.",
+    input_schema: { type: "object", properties: {
+      organization: { type: "string", minLength: 1, maxLength: 200 },
+      contactName: { type: "string", minLength: 1, maxLength: 200 },
+      contactEmail: { type: "string", description: "correo de contacto" },
+      summary: { type: "string", minLength: 5, maxLength: 2000 },
+      affectedAssets: { type: "array", items: { type: "string" }, description: "opcional: sitio web, correo, VPN…" },
+      types: { type: "array", items: { type: "string", enum: ["phishing_email", "network_intrusion", "malware_ransomware", "ddos", "data_breach", "unauthorized_access", "web_attack", "other"] } },
+      containmentTargets: { type: "array", items: { type: "string", enum: ["firewall", "nginx", "cloudflare"] } },
+    }, required: ["organization", "contactName", "contactEmail", "summary"] },
+  },
+];
+
+export async function runIncidentDraftAssistant(opts: { store: Store; question: string; requestedBy: string; fetchImpl?: FetchFn }): Promise<AiResult> {
+  const { store, question } = opts;
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const secret = await store.getAiSecret();
+  if (!secret) return { error: "AI_NOT_CONFIGURED", message: "El módulo de IA no está activado o no tiene una llave de API guardada. Ve a Configuración → Integración IA." };
+  const system = `Eres el asistente de IA que ayuda a abrir un caso en el módulo de Incidentes de "Ethical Security Copilot", ANTES de que el caso exista. ` +
+    `Tu única función aquí es conversar en español para reunir los datos mínimos: organización, quién reporta, correo de contacto y qué está pasando (resumen breve). ` +
+    `Pregunta por lo que falte, uno o pocos datos a la vez; nunca inventes ni supongas un dato que el humano no te haya dado. Si el humano menciona tipos de incidente o herramientas ` +
+    `de bloqueo ya disponibles (firewall, nginx, Cloudflare), inclúyelos, pero son opcionales. Cuando ya tengas los datos mínimos, llama a incident_draft — eso NO abre el caso, solo ` +
+    `arma el borrador para que el humano lo revise y lo confirme con un clic en la pantalla; tras eso, la conversación continúa ya dentro del caso.`;
+  const execTool = async (name: string, input: Record<string, unknown>): Promise<unknown> => {
+    if (name === "incident_draft") {
+      const parsed = IncidentCreateIn.safeParse(input);
+      if (!parsed.success) return { error: "VALIDATION", issues: parsed.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })) };
+      return { draft: parsed.data };
+    }
+    return { error: `herramienta desconocida: ${name}` };
+  };
+  return runAssistant({ provider: secret.provider as Provider, apiKey: secret.apiKey, model: secret.model, baseUrl: secret.baseUrl, system, question, tools: INCIDENT_DRAFT_TOOLS, execTool, fetchImpl });
+}
+
+const ASSESSMENT_DRAFT_TOOLS: ToolDef[] = [
+  {
+    name: "assessment_draft",
+    description: "Arma el BORRADOR de la evaluación con los datos ya reunidos en la conversación. NO crea nada. Llámala solo cuando el humano ya haya confirmado: nombre, datos del autorizador (organización, responsable, correo, contacto de emergencia), al menos un target de alcance, la ventana de fechas (inicio y fin, formato ISO 8601), los límites de ritmo (peticiones/s y paralelismo), al menos un modo permitido y al menos un módulo permitido. No inventes ningún dato.",
+    input_schema: { type: "object", properties: {
+      name: { type: "string", minLength: 3, maxLength: 120 },
+      authorizer: { type: "object", properties: {
+        organization: { type: "string" }, name: { type: "string" }, email: { type: "string" }, phone: { type: "string" }, emergencyContact: { type: "string", description: "a quién avisar si algo sale mal" },
+      }, required: ["organization", "name", "email", "emergencyContact"] },
+      allowedModes: { type: "array", minItems: 1, items: { type: "string", enum: ["passive", "lab", "active"] } },
+      scope: { type: "array", minItems: 1, items: { type: "object", properties: {
+        type: { type: "string", enum: ["cidr", "ip", "domain", "url", "device"] },
+        value: { type: "string" }, includeSubdomains: { type: "boolean" }, pathPrefix: { type: "string" },
+      }, required: ["type", "value"] } },
+      exclusions: { type: "array", items: { type: "object", properties: {
+        reason: { type: "string" }, technique: { type: "string" },
+        target: { type: "object", properties: { type: { type: "string" }, value: { type: "string" } } },
+      }, required: ["reason"] } },
+      window: { type: "object", properties: {
+        notBefore: { type: "string", description: "fecha-hora ISO 8601" }, notAfter: { type: "string", description: "fecha-hora ISO 8601" },
+        allowedHours: { type: "object", properties: { from: { type: "string" }, to: { type: "string" }, tz: { type: "string" } } },
+        maxRequestsPerSecond: { type: "number" }, maxConcurrency: { type: "number" }, maxTotalRequests: { type: "number" },
+      }, required: ["notBefore", "notAfter", "maxRequestsPerSecond", "maxConcurrency"] },
+      allowedModules: { type: "array", minItems: 1, items: { type: "string" } },
+      testAccounts: { type: "array", items: { type: "object", properties: { label: { type: "string" }, secretRef: { type: "string" } } } },
+      authorizationDocRef: { type: "string" },
+    }, required: ["name", "authorizer", "allowedModes", "scope", "window", "allowedModules"] },
+  },
+];
+
+export async function runAssessmentDraftAssistant(opts: { store: Store; question: string; requestedBy: string; fetchImpl?: FetchFn; modules?: Map<string, Module> }): Promise<AiResult> {
+  const { store, question } = opts;
+  const modules = opts.modules ?? builtinModules();
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const secret = await store.getAiSecret();
+  if (!secret) return { error: "AI_NOT_CONFIGURED", message: "El módulo de IA no está activado o no tiene una llave de API guardada. Ve a Configuración → Integración IA." };
+  const system = `Eres el asistente de IA que ayuda a crear una evaluación (autorización firmada) en "Ethical Security Copilot", ANTES de que exista. ` +
+    `Conversa en español para reunir: nombre de la evaluación; datos del autorizador humano (organización, responsable, correo, contacto de emergencia); ` +
+    `el alcance (al menos un target: IP, CIDR, dominio, URL o dispositivo — todos dentro de lo que el humano está autorizado a probar); la ventana (fecha de inicio y fin); ` +
+    `los límites de ritmo (peticiones por segundo y paralelismo); al menos un modo permitido (pasivo, laboratorio o activo); y al menos un módulo permitido. ` +
+    `Módulos disponibles en esta plataforma: ${[...modules.keys()].join(", ")}. Pregunta por lo que falte, de a poco; nunca inventes ni supongas un dato. ` +
+    `Cuando tengas lo mínimo confirmado por el humano, llama a assessment_draft — eso NO crea nada, solo arma el borrador para que el humano lo revise y lo confirme con un clic; ` +
+    `tras eso, un humano sigue teniendo que validar el alcance, planificar y aprobar antes de que corra cualquier módulo.`;
+  const execTool = async (name: string, input: Record<string, unknown>): Promise<unknown> => {
+    if (name === "assessment_draft") {
+      const parsed = AssessmentCreateIn.safeParse(input);
+      if (!parsed.success) return { error: "VALIDATION", issues: parsed.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })) };
+      return { draft: parsed.data };
+    }
+    return { error: `herramienta desconocida: ${name}` };
+  };
+  return runAssistant({ provider: secret.provider as Provider, apiKey: secret.apiKey, model: secret.model, baseUrl: secret.baseUrl, system, question, tools: ASSESSMENT_DRAFT_TOOLS, execTool, fetchImpl });
 }

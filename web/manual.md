@@ -141,6 +141,7 @@ Hasta ahora, la única forma de que un modelo de IA razone sobre tus casos era c
 - **El humano sigue siendo quien decide**: el control no es una pantalla de confirmación aparte — es que la IA solo actúa cuando tú se lo pides explícitamente, por escrito, en la propia conversación; esa instrucción queda también en la auditoría.
 - **Auditoría**: cada acción que dispara el asistente queda en el mismo registro encadenado, con el actor `ia-modulo:<usuario que preguntó>`, para distinguirla de lo hecho por MCP o a mano.
 - **Costo**: las llamadas a la API del proveedor elegido las paga la cuenta dueña de la llave que configuraste; la plataforma no añade ningún cargo propio.
+- **Chat de creación, antes de que el caso exista**: en los listados de *Incidentes* y de *Evaluaciones* hay un panel para conversar con la IA y armar el caso — cuéntale qué está pasando (o qué quieres evaluar) y te pregunta lo que falte. Ni `incident_open` ni `assessment_create` están en `RolePermissions.agent`: abrir un caso o crear una autorización lo decide siempre un humano, nunca la IA por su cuenta. Así que este chat no abre ni crea nada — solo arma un **borrador** que te muestra para revisar; recién al pulsar *Confirmar* se abre el caso (o se crea la evaluación como borrador), con el mismo permiso de rol de siempre. Esa misma conversación queda como el historial de IA del caso nuevo, así que al entrar a él la ves ahí mismo, continuada, sin tener que repetir nada.
 
 ## 8bis. Cadena de suministro: SBOM y vulnerabilidades conocidas (A03)
 

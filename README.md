@@ -109,6 +109,8 @@ Disponible en dos lugares, en un panel *Asistente de IA* fijo en la columna dere
 
 En ambos casos, el asistente actúa con exactamente los mismos permisos que ya tenía el rol `agent` por MCP — ni una herramienta más. Cada acción que dispara queda en el mismo registro de auditoría encadenado, con el actor `ia-modulo:<usuario>`.
 
+**Chat de creación** (listados de *Incidentes* y *Evaluaciones*): antes de que el caso exista, se puede conversar con la IA para armarlo — describe lo que pasa (o lo que quieres evaluar) y ella pregunta lo que falte. Ni `incident_open` ni `assessment_create` están en `RolePermissions.agent` (abrir un caso o crear una autorización lo decide siempre un humano, nunca la IA por su cuenta), así que este chat **no abre ni crea nada**: solo arma un borrador (`incident_draft` / `assessment_draft`) que el humano revisa y confirma con un clic — ese clic llama a la misma ruta humana de siempre (`POST /api/incidents` o `/api/assessments`, con el mismo permiso de rol de siempre). Al confirmar, la conversación que lo originó pasa a ser el historial de IA del caso nuevo, así que "continúa" sin cortes dentro de él.
+
 ## Alertas por webhook
 
 Estrictamente informativo: la plataforma nunca actúa sola a partir de una alerta, solo avisa. Un

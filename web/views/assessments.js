@@ -1,5 +1,55 @@
-import { h, api, panel, empty, stateSeal, fmtDate, toast, MODE, TARGET_TYPE, ApiError } from "../lib.js";
+import { h, api, panel, empty, stateSeal, fmtDate, toast, MODE, TARGET_TYPE, targetText, md, ApiError } from "../lib.js";
 import { getModules } from "./shared.js";
+
+/** Chat para crear una evaluación conversando. La IA solo arma un borrador (assessment_draft); la
+ * evaluación la crea el humano con un clic, que llama a la misma ruta de siempre (solo "authorizer").
+ * Al confirmar, esta conversación pasa a ser el historial de IA de la evaluación nueva. */
+function assessmentAiCreatePanel(ctx) {
+  if (!ctx.aiEnabled) return panel("Crear evaluación con la IA", h("div", { class: "body" }, h("p", { class: "muted" }, "El módulo de IA no está activado. Un autorizador puede activarlo en Configuración → Integración IA.")));
+  if (!ctx.can("createAssessment")) return null;
+  const draftHistory = [];
+  const history = h("div", { class: "ai-history" });
+  const draftBox = h("div", {});
+  const status = h("div", {});
+  const q = h("textarea", { rows: 3, placeholder: "Describe la evaluación: nombre, organización y responsable que autoriza, qué quieres probar (alcance), desde cuándo hasta cuándo, y con qué módulos. Te pregunta lo que falte." });
+  const aiMsgCard = (question, answerNode) => h("article", { class: "ai-msg" }, h("p", { class: "q" }, question), answerNode);
+  const renderDraft = (draft) => {
+    const create = async () => {
+      try { const r = await api("POST", "/api/assessments", { ...draft, draftHistory }); toast("Evaluación creada como borrador."); ctx.go(`#/evaluaciones/${r.id}`); }
+      catch (e) { toast(e.issues?.length ? e.issues.map((i) => i.message).join(" ") : e.message, true); }
+    };
+    return panel("Borrador de la evaluación", h("div", { class: "body stack" },
+      h("dl", { class: "facts" },
+        h("dt", {}, "Nombre"), h("dd", {}, draft.name),
+        h("dt", {}, "Autorizador"), h("dd", {}, `${draft.authorizer.organization} · ${draft.authorizer.name} · ${draft.authorizer.email}`),
+        h("dt", {}, "En emergencia"), h("dd", {}, draft.authorizer.emergencyContact),
+        h("dt", {}, "Alcance"), h("dd", {}, draft.scope.map((t) => `${TARGET_TYPE[t.type] ?? t.type}: ${targetText(t)}`).join("; ")),
+        h("dt", {}, "Ventana"), h("dd", {}, `${fmtDate(draft.window.notBefore)} → ${fmtDate(draft.window.notAfter)}`),
+        h("dt", {}, "Ritmo"), h("dd", {}, `${draft.window.maxRequestsPerSecond} peticiones/s · ${draft.window.maxConcurrency} en paralelo`),
+        h("dt", {}, "Modos"), h("dd", {}, draft.allowedModes.map((m) => MODE[m] ?? m).join(", ")),
+        h("dt", {}, "Módulos"), h("dd", {}, draft.allowedModules.join(", "))),
+      h("p", { class: "muted" }, "Revísalo: nada se crea solo. Al confirmar se crea como borrador (todavía sin autorizar ninguna ejecución) y esta conversación queda como su historial de IA."),
+      h("button", { class: "btn primary", onclick: create }, "Confirmar y crear la evaluación")));
+  };
+  const ask = async () => {
+    const question = q.value;
+    if (!question.trim()) return;
+    status.replaceChildren(h("p", { class: "muted" }, "Pensando…"));
+    try {
+      const r = await api("POST", "/api/assessments/ai-create", { question });
+      status.replaceChildren();
+      history.append(aiMsgCard(question, md(r.answer)));
+      draftHistory.push({ question, answer: r.answer });
+      const draftAction = r.actions.find((a) => a.tool === "assessment_draft" && a.result?.draft);
+      if (draftAction) { draftBox.replaceChildren(renderDraft(draftAction.result.draft)); draftBox.scrollIntoView({ block: "start" }); }
+      else history.scrollIntoView({ block: "end" });
+      q.value = "";
+    } catch (e) { status.replaceChildren(h("p", { class: "err" }, e.message)); }
+  };
+  return panel("Crear evaluación con la IA", h("div", { class: "body stack" },
+    h("p", { class: "muted" }, "Describe lo que quieres evaluar y arma la autorización conversando. Nada se crea solo: tú confirmas el borrador antes."),
+    history, q, h("button", { class: "btn primary", onclick: ask }, "Enviar"), status, draftBox));
+}
 
 export async function assessmentsView(ctx) {
   const list = await api("GET", "/api/assessments");
@@ -12,7 +62,8 @@ export async function assessmentsView(ctx) {
         h("td", {}, h("a", { href: `#/evaluaciones/${a.id}` }, a.name)), h("td", {}, a.organization), h("td", {}, stateSeal(a.state)),
         h("td", {}, `${fmtDate(a.window.notBefore)} → ${fmtDate(a.window.notAfter)}`), h("td", {}, `v${a.version}`))))))
       : empty("Aún no hay evaluaciones", ctx.can("createAssessment") ? "Crea la primera para definir un alcance autorizado." : "Un autorizador debe crear la primera.",
-          ctx.can("createAssessment") ? h("a", { class: "btn primary", href: "#/evaluaciones/nueva" }, "Nueva evaluación") : null)));
+          ctx.can("createAssessment") ? h("a", { class: "btn primary", href: "#/evaluaciones/nueva" }, "Nueva evaluación") : null)),
+    assessmentAiCreatePanel(ctx));
   return { crumb: "Evaluaciones", title: "Evaluaciones", node };
 }
 
