@@ -139,6 +139,11 @@ export async function aiConfigView(ctx) {
     } catch (e) { testOut.textContent = `✗ ${e.message}`; testOut.className = "err"; }
   };
 
+  // Al entrar (o volver) a esta vista, si ya hay una llave guardada se comprueba sola con esa llave —
+  // así se ve de una vez si la conexión sigue viva, sin tener que pegar la llave de nuevo y pulsar
+  // los botones a mano cada vez que se sale y se vuelve.
+  if (cfg.enabled && cfg.hasKey) { loadModels(); test(); }
+
   return { crumb: "Configuración", title: "Configuración", node: h("div", { class: "stack" },
     h("div", { class: "page-head" }, h("div", {}, h("h1", {}, "Integración de IA"),
       h("p", {}, "Conecta un modelo de IA por API, además (o en vez) de conectarlo por MCP. No tiene que ser Anthropic: también funciona con cualquier API compatible con OpenAI o con Gemini. Cuando actúa aquí dentro, tiene exactamente los mismos permisos que ya tiene el rol 'agent': nunca abre ni cierra un incidente, nunca toca ninguna red por sí solo."))),

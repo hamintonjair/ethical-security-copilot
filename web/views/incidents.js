@@ -1,4 +1,6 @@
-import { h, api, panel, empty, seal, fmtDate, toast, copyText, download, formDialog, confirmDialog, openDialog, errorBox, ROLE, md } from "../lib.js";
+import { h, api, panel, empty, seal, fmtDate, toast, copyText, download, formDialog, confirmDialog, openDialog, errorBox, ROLE, md, loadChatDraft, saveChatDraft, clearChatDraft } from "../lib.js";
+
+const INCIDENT_CHAT_KEY = "esc:ai-create:incident";
 
 const STATUS = { open: "Abierto", contained: "Contenido", closed: "Cerrado" };
 const STATUS_TONE = { open: "warn", contained: "ok", closed: "mute" };
@@ -46,7 +48,10 @@ const pickTargets = (title, intro, selected = []) => pickFrom(CONTAINMENT_TOOLS,
 function incidentAiCreatePanel(ctx) {
   if (!ctx.aiEnabled) return panel("Abrir incidente con la IA", h("div", { class: "body" }, h("p", { class: "muted" }, "El módulo de IA no está activado. Un autorizador puede activarlo en Configuración → Integración IA.")));
   if (!ctx.can("openIncident")) return null;
-  const draftHistory = [];
+  const saved = loadChatDraft(INCIDENT_CHAT_KEY);
+  const draftHistory = saved?.draftHistory ? [...saved.draftHistory] : [];
+  let lastDraft = saved?.draft ?? null;
+  const persist = () => saveChatDraft(INCIDENT_CHAT_KEY, { draftHistory, draft: lastDraft });
   const history = h("div", { class: "ai-history" });
   const draftBox = h("div", { class: "ai-draft" });
   const status = h("div", {});
@@ -54,7 +59,7 @@ function incidentAiCreatePanel(ctx) {
   const aiMsgCard = (question, answerNode) => h("article", { class: "ai-msg" }, h("p", { class: "q" }, question), answerNode);
   const renderDraft = (draft) => {
     const create = async () => {
-      try { const r = await api("POST", "/api/incidents", { ...draft, draftHistory }); toast("Caso abierto."); ctx.go(`#/incidentes/${r.id}`); }
+      try { const r = await api("POST", "/api/incidents", { ...draft, draftHistory }); clearChatDraft(INCIDENT_CHAT_KEY); toast("Caso abierto."); ctx.go(`#/incidentes/${r.id}`); }
       catch (e) { toast(e.message, true); }
     };
     return panel("Borrador del caso", h("div", { class: "body stack" },
@@ -68,6 +73,9 @@ function incidentAiCreatePanel(ctx) {
       h("p", { class: "muted" }, "Revísalo: el caso no se abre solo. Al confirmar se abre con estos datos y esta conversación queda como su historial de IA."),
       h("button", { class: "btn primary", onclick: create }, "Confirmar y abrir el caso")));
   };
+  // Si había una conversación en curso guardada (de antes de salir de esta vista), se retoma tal cual.
+  for (const m of draftHistory) history.append(aiMsgCard(m.question, md(m.answer)));
+  if (lastDraft) draftBox.replaceChildren(renderDraft(lastDraft));
   const ask = async () => {
     const question = q.value;
     if (!question.trim()) return;
@@ -78,8 +86,9 @@ function incidentAiCreatePanel(ctx) {
       history.append(aiMsgCard(question, md(r.answer)));
       draftHistory.push({ question, answer: r.answer });
       const draftAction = r.actions.find((a) => a.tool === "incident_draft" && a.result?.draft);
-      if (draftAction) { draftBox.replaceChildren(renderDraft(draftAction.result.draft)); draftBox.scrollIntoView({ block: "start" }); }
+      if (draftAction) { lastDraft = draftAction.result.draft; draftBox.replaceChildren(renderDraft(lastDraft)); draftBox.scrollIntoView({ block: "start" }); }
       else history.scrollIntoView({ block: "end" });
+      persist();
       q.value = "";
     } catch (e) { status.replaceChildren(h("p", { class: "err" }, e.message)); }
   };

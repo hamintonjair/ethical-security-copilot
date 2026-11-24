@@ -1,5 +1,7 @@
-import { h, api, panel, empty, stateSeal, fmtDate, toast, MODE, TARGET_TYPE, targetText, md, ApiError } from "../lib.js";
+import { h, api, panel, empty, stateSeal, fmtDate, toast, MODE, TARGET_TYPE, targetText, md, ApiError, loadChatDraft, saveChatDraft, clearChatDraft } from "../lib.js";
 import { getModules } from "./shared.js";
+
+const ASSESSMENT_CHAT_KEY = "esc:ai-create:assessment";
 
 /** Chat para crear una evaluación conversando. La IA solo arma un borrador (assessment_draft); la
  * evaluación la crea el humano con un clic, que llama a la misma ruta de siempre (solo "authorizer").
@@ -7,7 +9,10 @@ import { getModules } from "./shared.js";
 function assessmentAiCreatePanel(ctx) {
   if (!ctx.aiEnabled) return panel("Crear evaluación con la IA", h("div", { class: "body" }, h("p", { class: "muted" }, "El módulo de IA no está activado. Un autorizador puede activarlo en Configuración → Integración IA.")));
   if (!ctx.can("createAssessment")) return null;
-  const draftHistory = [];
+  const saved = loadChatDraft(ASSESSMENT_CHAT_KEY);
+  const draftHistory = saved?.draftHistory ? [...saved.draftHistory] : [];
+  let lastDraft = saved?.draft ?? null;
+  const persist = () => saveChatDraft(ASSESSMENT_CHAT_KEY, { draftHistory, draft: lastDraft });
   const history = h("div", { class: "ai-history" });
   const draftBox = h("div", { class: "ai-draft" });
   const status = h("div", {});
@@ -15,7 +20,7 @@ function assessmentAiCreatePanel(ctx) {
   const aiMsgCard = (question, answerNode) => h("article", { class: "ai-msg" }, h("p", { class: "q" }, question), answerNode);
   const renderDraft = (draft) => {
     const create = async () => {
-      try { const r = await api("POST", "/api/assessments", { ...draft, draftHistory }); toast("Evaluación creada como borrador."); ctx.go(`#/evaluaciones/${r.id}`); }
+      try { const r = await api("POST", "/api/assessments", { ...draft, draftHistory }); clearChatDraft(ASSESSMENT_CHAT_KEY); toast("Evaluación creada como borrador."); ctx.go(`#/evaluaciones/${r.id}`); }
       catch (e) { toast(e.issues?.length ? e.issues.map((i) => i.message).join(" ") : e.message, true); }
     };
     return panel("Borrador de la evaluación", h("div", { class: "body stack" },
@@ -31,6 +36,9 @@ function assessmentAiCreatePanel(ctx) {
       h("p", { class: "muted" }, "Revísalo: nada se crea solo. Al confirmar se crea como borrador (todavía sin autorizar ninguna ejecución) y esta conversación queda como su historial de IA."),
       h("button", { class: "btn primary", onclick: create }, "Confirmar y crear la evaluación")));
   };
+  // Si había una conversación en curso guardada (de antes de salir de esta vista), se retoma tal cual.
+  for (const m of draftHistory) history.append(aiMsgCard(m.question, md(m.answer)));
+  if (lastDraft) draftBox.replaceChildren(renderDraft(lastDraft));
   const ask = async () => {
     const question = q.value;
     if (!question.trim()) return;
@@ -41,8 +49,9 @@ function assessmentAiCreatePanel(ctx) {
       history.append(aiMsgCard(question, md(r.answer)));
       draftHistory.push({ question, answer: r.answer });
       const draftAction = r.actions.find((a) => a.tool === "assessment_draft" && a.result?.draft);
-      if (draftAction) { draftBox.replaceChildren(renderDraft(draftAction.result.draft)); draftBox.scrollIntoView({ block: "start" }); }
+      if (draftAction) { lastDraft = draftAction.result.draft; draftBox.replaceChildren(renderDraft(lastDraft)); draftBox.scrollIntoView({ block: "start" }); }
       else history.scrollIntoView({ block: "end" });
+      persist();
       q.value = "";
     } catch (e) { status.replaceChildren(h("p", { class: "err" }, e.message)); }
   };

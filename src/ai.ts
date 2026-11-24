@@ -29,17 +29,30 @@ const baseOf = (provider: Provider, baseUrl?: string | null) => (baseUrl || DEFA
 export type FetchFn = typeof fetch;
 
 /** Los proveedores (sobre todo Gemini en los niveles gratis) devuelven de vez en cuando un 429/500/502/503/504
- * transitorio — "modelo sobrecargado, reintenta" — que no tiene nada que ver con la llave ni el modelo. En vez
- * de mostrárselo al humano como si fuera un error real, se reintenta un par de veces con una espera corta. */
-async function fetchWithRetry(fetchImpl: FetchFn, url: string, init: Parameters<FetchFn>[1], tries = 3): Promise<Response> {
+ * transitorio — "modelo sobrecargado" o "demasiadas solicitudes", que no tiene nada que ver con la llave ni el
+ * modelo. En vez de mostrárselo al humano como si fuera un error real, se reintenta varias veces con espera
+ * (respetando el "Retry-After" del proveedor si lo manda, típico en 429 por cuota por minuto) antes de rendirse. */
+async function fetchWithRetry(fetchImpl: FetchFn, url: string, init: Parameters<FetchFn>[1], tries = 4): Promise<Response> {
   const RETRYABLE = new Set([429, 500, 502, 503, 504]);
   let res: Response;
   for (let i = 0; i < tries; i++) {
     res = await fetchImpl(url, init);
     if (res.ok || i === tries - 1 || !RETRYABLE.has(res.status)) return res;
-    await new Promise((r) => setTimeout(r, 400 * (i + 1) + Math.floor(Math.random() * 200)));
+    const retryAfter = Number(res.headers?.get?.("retry-after"));
+    const wait = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 6000) : Math.min(500 * 2 ** i, 4000) + Math.floor(Math.random() * 250);
+    await new Promise((r) => setTimeout(r, wait));
   }
   return res!;
+}
+
+/** Mensaje para el humano cuando, tras reintentar, el proveedor sigue sin responder bien. Un 429 agotado tras
+ * reintentos suele ser cuota por minuto (no por crédito agotado), así que se lo decimos explícito en vez de
+ * dejarle solo el código numérico — eso es lo que de verdad ayuda a decidir si reintentar de nuevo o no. */
+function upstreamErrorMessage(label: string, status: number, model: string): string {
+  if (status === 429) return `${label} está limitando las solicitudes por ahora (429: demasiadas peticiones en poco tiempo, típico de los niveles gratuitos). Ya se reintentó varias veces solo; espera unos segundos y vuelve a preguntar.`;
+  if (status === 404) return `${label} respondió 404 (revisa que el modelo "${model}" exista y esté disponible para tu llave).`;
+  if (status >= 500) return `${label} respondió ${status} (falla temporal del proveedor). Ya se reintentó solo; si persiste, vuelve a intentarlo en un momento.`;
+  return `${label} respondió ${status}.`;
 }
 export interface AiAction { tool: string; input: Record<string, unknown>; result: unknown }
 export type AiResult = { answer: string; actions: AiAction[] } | { error: string; message: string };
@@ -113,7 +126,7 @@ async function runAnthropicLoop(opts: RunOpts): Promise<AiResult> {
       headers: { "x-api-key": opts.apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
       body: JSON.stringify({ model: opts.model, max_tokens: MAX_TOKENS, system: opts.system, messages, tools: opts.tools }),
     });
-    if (!res.ok) return { error: "AI_UPSTREAM_ERROR", message: `Anthropic respondió ${res.status}${res.status === 404 ? ` (revisa que el modelo "${opts.model}" exista y esté disponible para tu llave)` : ""}.` };
+    if (!res.ok) return { error: "AI_UPSTREAM_ERROR", message: upstreamErrorMessage("Anthropic", res.status, opts.model) };
     const data = await res.json() as { content: Array<TextBlock | ToolUseBlock>; stop_reason: string };
     const toolUses = data.content.filter((b): b is ToolUseBlock => b.type === "tool_use");
     const text = data.content.filter((b): b is TextBlock => b.type === "text").map((b) => b.text).join("\n").trim();
@@ -143,7 +156,7 @@ async function runOpenAiLoop(opts: RunOpts): Promise<AiResult> {
       headers: { Authorization: `Bearer ${opts.apiKey}`, "content-type": "application/json" },
       body: JSON.stringify({ model: opts.model, max_tokens: MAX_TOKENS, messages, tools, tool_choice: "auto" }),
     });
-    if (!res.ok) return { error: "AI_UPSTREAM_ERROR", message: `La API respondió ${res.status}${res.status === 404 ? ` (revisa que el modelo "${opts.model}" exista y esté disponible para tu llave)` : ""}.` };
+    if (!res.ok) return { error: "AI_UPSTREAM_ERROR", message: upstreamErrorMessage("La API", res.status, opts.model) };
     const data = await res.json() as { choices?: Array<{ message: Msg }> };
     const msg = data.choices?.[0]?.message;
     if (!msg) return { error: "AI_UPSTREAM_ERROR", message: "Respuesta vacía de la API." };
@@ -174,7 +187,7 @@ async function runGeminiLoop(opts: RunOpts): Promise<AiResult> {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ system_instruction: { parts: [{ text: opts.system }] }, contents, tools, generationConfig: { maxOutputTokens: MAX_TOKENS } }),
     });
-    if (!res.ok) return { error: "AI_UPSTREAM_ERROR", message: `Gemini respondió ${res.status}${res.status === 404 ? ` (revisa que el modelo "${opts.model}" exista y esté disponible para tu llave)` : ""}.` };
+    if (!res.ok) return { error: "AI_UPSTREAM_ERROR", message: upstreamErrorMessage("Gemini", res.status, opts.model) };
     const data = await res.json() as { candidates?: Array<{ content: { parts: Part[] } }> };
     const parts = data.candidates?.[0]?.content?.parts ?? [];
     const calls = parts.filter((p) => p.functionCall);

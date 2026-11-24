@@ -173,6 +173,23 @@ export function download(filename, text, type) {
   document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+/* ---------- Estado efímero de un chat en curso (sessionStorage) ----------
+   Para el chat de "crear caso conversando" en las listas de Incidentes/Evaluaciones: todavía no hay
+   un id de caso contra el cual guardar nada en el servidor, así que mientras se arma el borrador la
+   conversación se guarda en sessionStorage. Así, si el humano sale de la vista (u otra pestaña/recarga
+   dentro de la misma sesión) y vuelve, la retoma donde la dejó en vez de que se resetee; se borra sola
+   al confirmar el caso (porque desde ahí la conversación sigue como historial del caso ya en el servidor)
+   o al cerrar la pestaña (sessionStorage no sobrevive eso), que es justo lo que corresponde a un borrador. */
+export function loadChatDraft(key) {
+  try { return JSON.parse(sessionStorage.getItem(key) || "null"); } catch { return null; }
+}
+export function saveChatDraft(key, state) {
+  try { sessionStorage.setItem(key, JSON.stringify(state)); } catch { /* best-effort */ }
+}
+export function clearChatDraft(key) {
+  try { sessionStorage.removeItem(key); } catch { /* best-effort */ }
+}
+
 export const panel = (title, body, actions) => h("section", { class: "panel" },
   title ? h("header", {}, h("h3", {}, title), actions ?? null) : null, body);
 export const empty = (title, text, action) => h("div", { class: "empty" }, h("strong", {}, title), text ? h("p", {}, text) : null, action ?? null);
