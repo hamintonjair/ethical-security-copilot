@@ -27,6 +27,20 @@ const DEFAULT_BASE: Record<Provider, string> = {
 const baseOf = (provider: Provider, baseUrl?: string | null) => (baseUrl || DEFAULT_BASE[provider]).replace(/\/+$/, "");
 
 export type FetchFn = typeof fetch;
+
+/** Los proveedores (sobre todo Gemini en los niveles gratis) devuelven de vez en cuando un 429/500/502/503/504
+ * transitorio — "modelo sobrecargado, reintenta" — que no tiene nada que ver con la llave ni el modelo. En vez
+ * de mostrárselo al humano como si fuera un error real, se reintenta un par de veces con una espera corta. */
+async function fetchWithRetry(fetchImpl: FetchFn, url: string, init: Parameters<FetchFn>[1], tries = 3): Promise<Response> {
+  const RETRYABLE = new Set([429, 500, 502, 503, 504]);
+  let res: Response;
+  for (let i = 0; i < tries; i++) {
+    res = await fetchImpl(url, init);
+    if (res.ok || i === tries - 1 || !RETRYABLE.has(res.status)) return res;
+    await new Promise((r) => setTimeout(r, 400 * (i + 1) + Math.floor(Math.random() * 200)));
+  }
+  return res!;
+}
 export interface AiAction { tool: string; input: Record<string, unknown>; result: unknown }
 export type AiResult = { answer: string; actions: AiAction[] } | { error: string; message: string };
 export interface ModelInfo { id: string; label: string }
@@ -94,7 +108,7 @@ async function runAnthropicLoop(opts: RunOpts): Promise<AiResult> {
   const messages: Array<{ role: "user" | "assistant"; content: unknown }> = [{ role: "user", content: opts.question.slice(0, 4000) }];
   const actions: AiAction[] = [];
   for (let i = 0; i < MAX_ITERS; i++) {
-    const res = await opts.fetchImpl(url, {
+    const res = await fetchWithRetry(opts.fetchImpl, url, {
       method: "POST",
       headers: { "x-api-key": opts.apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
       body: JSON.stringify({ model: opts.model, max_tokens: MAX_TOKENS, system: opts.system, messages, tools: opts.tools }),
@@ -124,7 +138,7 @@ async function runOpenAiLoop(opts: RunOpts): Promise<AiResult> {
   const actions: AiAction[] = [];
   const tools = opts.tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.input_schema } }));
   for (let i = 0; i < MAX_ITERS; i++) {
-    const res = await opts.fetchImpl(url, {
+    const res = await fetchWithRetry(opts.fetchImpl, url, {
       method: "POST",
       headers: { Authorization: `Bearer ${opts.apiKey}`, "content-type": "application/json" },
       body: JSON.stringify({ model: opts.model, max_tokens: MAX_TOKENS, messages, tools, tool_choice: "auto" }),
@@ -155,7 +169,7 @@ async function runGeminiLoop(opts: RunOpts): Promise<AiResult> {
   const actions: AiAction[] = [];
   const tools = [{ functionDeclarations: opts.tools.map((t) => ({ name: t.name, description: t.description, parameters: t.input_schema })) }];
   for (let i = 0; i < MAX_ITERS; i++) {
-    const res = await opts.fetchImpl(url, {
+    const res = await fetchWithRetry(opts.fetchImpl, url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ system_instruction: { parts: [{ text: opts.system }] }, contents, tools, generationConfig: { maxOutputTokens: MAX_TOKENS } }),

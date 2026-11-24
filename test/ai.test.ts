@@ -461,3 +461,23 @@ test("IA (chat de creación de evaluación): arma el borrador pero no crea nada"
   assert.equal((await freshStore.listAssessments()).length, 0); // nada se creó solo
   await freshStore.close();
 });
+
+test("IA: un 503 transitorio del proveedor (modelo sobrecargado) se reintenta solo, sin molestar al humano", async () => {
+  const freshStore = await Store.open("memory", KEY);
+  await freshStore.setAiConfig({ enabled: true, provider: "gemini", model: "gemini-test", apiKey: "sk-gem-test" }, "ana");
+  const inc = await freshStore.createIncident({ organization: "Org", contactName: "A", contactEmail: "a@demo.test", summary: "ataque en curso", affectedAssets: [] }, "ana");
+
+  let call = 0;
+  const fetchImpl = (async () => {
+    call++;
+    if (call === 1) return new Response("sobrecargado", { status: 503 }); // primer intento: transitorio
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "Ya puedo responder." }] } }] }), { status: 200 }); // segundo: éxito
+  }) as typeof fetch;
+
+  const r = await runIncidentAssistant({ store: freshStore, incidentId: inc.id, question: "hola", requestedBy: "omar", fetchImpl });
+  assert.ok(!("error" in r), JSON.stringify(r));
+  if ("error" in r) throw new Error("unreachable");
+  assert.equal(r.answer, "Ya puedo responder.");
+  assert.equal(call, 2); // se reintentó una vez, sin exponer el 503 al humano
+  await freshStore.close();
+});
