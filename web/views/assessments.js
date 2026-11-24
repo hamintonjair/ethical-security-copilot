@@ -11,7 +11,7 @@ function assessmentAiCreatePanel(ctx) {
   const history = h("div", { class: "ai-history" });
   const draftBox = h("div", { class: "ai-draft" });
   const status = h("div", {});
-  const q = h("textarea", { rows: 3, placeholder: "Describe la evaluación: nombre, organización y responsable que autoriza, qué quieres probar (alcance), desde cuándo hasta cuándo, y con qué módulos. Te pregunta lo que falte." });
+  const q = h("textarea", { rows: 3, placeholder: "Describe la evaluación: nombre, organización y responsable que autoriza, qué quieres probar (alcance), desde cuándo hasta cuándo, y con qué módulos. Te pregunta lo que falte.", onkeydown: (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } } });
   const aiMsgCard = (question, answerNode) => h("article", { class: "ai-msg" }, h("p", { class: "q" }, question), answerNode);
   const renderDraft = (draft) => {
     const create = async () => {

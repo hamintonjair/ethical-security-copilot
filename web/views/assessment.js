@@ -133,7 +133,7 @@ function aiAssistPanel(ctx, d, reload) {
     h("p", { class: "q" }, question), answerNode, ...actionNodes, meta ? h("p", { class: "meta" }, meta) : null);
   const history = h("div", { class: "ai-history" }, ...(d.aiMessages ?? []).map((m) => aiMsgCard(m.question, md(m.answer), `${m.actor} · ${fmtDate(m.createdAt)}`)));
   const status = h("div", {});
-  const q = h("textarea", { rows: 3, placeholder: "Pídele algo, p. ej.: «revisa los hallazgos y dime si falta algo» o «redacta el informe en borrador con lo confirmado hasta ahora»." });
+  const q = h("textarea", { rows: 3, placeholder: "Pídele algo, p. ej.: «revisa los hallazgos y dime si falta algo» o «redacta el informe en borrador con lo confirmado hasta ahora».", onkeydown: (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } } });
   const ask = async () => {
     if (!q.value.trim()) return;
     status.replaceChildren(h("p", { class: "muted" }, "Pensando…"));

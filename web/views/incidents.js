@@ -50,7 +50,7 @@ function incidentAiCreatePanel(ctx) {
   const history = h("div", { class: "ai-history" });
   const draftBox = h("div", { class: "ai-draft" });
   const status = h("div", {});
-  const q = h("textarea", { rows: 3, placeholder: "Cuéntale qué está pasando: organización, quién reporta, correo de contacto y un resumen breve. Te pregunta lo que falte." });
+  const q = h("textarea", { rows: 3, placeholder: "Cuéntale qué está pasando: organización, quién reporta, correo de contacto y un resumen breve. Te pregunta lo que falte.", onkeydown: (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } } });
   const aiMsgCard = (question, answerNode) => h("article", { class: "ai-msg" }, h("p", { class: "q" }, question), answerNode);
   const renderDraft = (draft) => {
     const create = async () => {
@@ -215,7 +215,7 @@ export async function incidentView(ctx, id) {
   };
   const aiPanel = () => {
     if (!ctx.aiEnabled) return panel("Asistente de IA", h("div", { class: "body" }, h("p", { class: "muted" }, "El módulo de IA no está activado. Un autorizador puede activarlo en Configuración → Integración IA.")));
-    const q = h("textarea", { rows: 3, placeholder: "Pídele algo, p. ej.: «revisa la evidencia y dime qué hacer» o «genera el plan de contención con los IOCs que ya tenemos»." });
+    const q = h("textarea", { rows: 3, placeholder: "Pídele algo, p. ej.: «revisa la evidencia y dime qué hacer» o «genera el plan de contención con los IOCs que ya tenemos».", onkeydown: (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); askAi(q.value, q); } } });
     return panel("Asistente de IA", h("div", { class: "body stack" },
       h("p", { class: "muted" }, "Usa el modelo configurado por tu organización. Solo analiza y redacta; nunca ejecuta nada por sí solo ni abre o cierra el caso."),
       aiHistory, q, h("button", { class: "btn primary", onclick: () => askAi(q.value, q) }, "Preguntar a la IA"), aiStatus));
