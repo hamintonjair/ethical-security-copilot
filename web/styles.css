@@ -81,6 +81,10 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 /* ---------- Panel lateral del asistente de IA (incidentes y evaluaciones) ---------- */
 .detail-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); gap: 20px; align-items: start; }
+/* minmax(0, …) en las columnas de arriba solo fija el mínimo de la pista; cada celda de la grilla
+   necesita además su propio min-width:0, si no, una tabla ancha dentro de un panel puede seguir
+   forzando la grilla entera (y con ella toda la página) a desbordarse horizontalmente. */
+.detail-layout > * { min-width: 0; }
 .ai-side { position: sticky; top: 78px; max-height: calc(100vh - 100px); display: flex; min-width: 0; }
 .ai-side > .panel { display: flex; flex-direction: column; min-height: 0; max-height: 100%; width: 100%; }
 .ai-side > .panel > .body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
