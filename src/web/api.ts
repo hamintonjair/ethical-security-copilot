@@ -13,7 +13,7 @@ import { PolicyEngine } from "../policy.js";
 import { Gateway } from "../gateway.js";
 import { runScanInitiate, runScanStop } from "../scan.js";
 import { OAuth, OAuthError } from "../oauth.js";
-import { IncidentCreateIn, IncidentEvidenceIn, IncidentContainIn, IncidentTypesIn, IncidentTargetsIn, AiConfigIn, AiModelsIn, AiAssistIn, SupplyChainAnalyzeIn, AlertsConfigIn } from "../schemas.js";
+import { IncidentCreateIn, IncidentEvidenceIn, IncidentContainIn, IncidentTypesIn, IncidentTargetsIn, AiConfigIn, AiModelsIn, AiAssistIn, AiConfigTestIn, SupplyChainAnalyzeIn, AlertsConfigIn } from "../schemas.js";
 import { analyzeLog, analyzeEmailHeaders, containmentRules, buildIncidentReport, suggestIncidentTypes, TYPE_GUIDANCE, MAX_EVIDENCE_CHARS } from "../incident.js";
 import { parseManifest, checkVulnerabilities } from "../supplychain.js";
 import { runIncidentAssistant, runAssessmentAssistant, runIncidentDraftAssistant, runAssessmentDraftAssistant, aiActor, testApiKey, listModels, type Provider } from "../ai.js";
@@ -425,10 +425,8 @@ export function createApi(ctx: ApiCtx) {
     catch (e) { throw new HttpError(400, "AI_UPSTREAM_ERROR", (e as Error).message || "No se pudo consultar los modelos disponibles."); }
   });
   route("POST", "/api/ai/config/test", CAN.aiConfig, async ({ body }) => {
-    let apiKey = typeof body.apiKey === "string" && body.apiKey ? body.apiKey : undefined;
-    let provider = (typeof body.provider === "string" && body.provider ? body.provider : undefined) as Provider | undefined;
-    let baseUrl = typeof body.baseUrl === "string" && body.baseUrl ? body.baseUrl : undefined;
-    let model = typeof body.model === "string" && body.model ? body.model : undefined;
+    const parsedTest = AiConfigTestIn.parse(body);
+    let { apiKey, provider, baseUrl, model } = parsedTest;
     if (!apiKey) {
       const secret = await store.getAiSecret();
       if (!secret) throw new HttpError(400, "NO_KEY", "No hay una llave guardada ni se envió una para probar.");

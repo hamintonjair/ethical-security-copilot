@@ -15,10 +15,10 @@ const SEVERITIES = [["info", "Info o más (todo)"], ["low", "Baja o más"], ["me
 
 function alertsPanel(ctx, acfg) {
   const enabled = h("input", { type: "checkbox", checked: acfg.enabled });
-  const webhookUrl = h("input", { type: "text", value: acfg.webhookUrl ?? "", placeholder: "https://tu-servidor.ejemplo/webhooks/esc" });
+  const webhookUrl = h("input", { type: "text", name: "webhook-url", autocomplete: "url", value: acfg.webhookUrl ?? "", placeholder: "https://tu-servidor.ejemplo/webhooks/esc" });
   const minSeverity = h("select", {}, SEVERITIES.map(([v, l]) => h("option", { value: v, selected: v === acfg.minSeverity }, l)));
   const notifyIncident = h("input", { type: "checkbox", checked: acfg.notifyIncidentOpen });
-  const secret = h("input", { type: "password", autocomplete: "off", placeholder: acfg.hasSecret ? `Guardado (termina en …${acfg.secretLast4})` : "Opcional: para firmar el cuerpo (HMAC-SHA256)" });
+  const secret = h("input", { type: "password", name: "webhook-secret", autocomplete: "new-password", placeholder: acfg.hasSecret ? `Guardado (termina en …${acfg.secretLast4})` : "Opcional: para firmar el cuerpo (HMAC-SHA256)" });
   const clearSecret = h("input", { type: "checkbox" });
   const clearSecretField = h("div", { class: "field", hidden: !acfg.hasSecret }, h("label", {}, clearSecret, " Quitar el secreto de firma guardado"));
   const status = h("p", { class: "muted" }, acfg.updatedAt ? `Última actualización: ${fmtDate(acfg.updatedAt)} por ${acfg.updatedBy}.` : "Aún no configuradas.");
@@ -68,13 +68,20 @@ export async function aiConfigView(ctx) {
 
   const enabled = h("input", { type: "checkbox", checked: cfg.enabled });
   const provider = h("select", {}, PROVIDERS.map(([v, l]) => h("option", { value: v, selected: v === cfg.provider }, l)));
-  const baseUrl = h("input", { type: "text", value: cfg.baseUrl ?? "", placeholder: DEFAULT_BASE[cfg.provider] ?? "" });
+  // autocomplete="off" solo no basta: Chrome, al ver un campo de texto justo antes de uno de
+  // contraseña, a veces lo trata como "usuario" de un formulario de acceso y le mete ahí el usuario
+  // guardado del navegador (por eso aparecía "hamintonjair" en vez de la URL guardada). name="url"
+  // con autocomplete="url" (un tipo de campo real, no "usuario") evita esa confusión.
+  const baseUrl = h("input", { type: "text", name: "url", autocomplete: "url", value: cfg.baseUrl ?? "", placeholder: DEFAULT_BASE[cfg.provider] ?? "" });
   const baseUrlField = h("div", { class: "field" }, h("label", {}, "URL base (opcional)"), baseUrl,
     h("span", { class: "hint" }, "Déjala en blanco para usar la URL oficial del proveedor. Solo cámbiala si usas un proxy o un endpoint propio compatible."));
   const modelSelect = h("select", {}, cfg.model ? [h("option", { value: cfg.model, selected: true }, cfg.model)] : []);
   const modelManual = h("input", { type: "text", value: cfg.model ?? "", hidden: true, placeholder: "id del modelo" });
   const modelMsg = h("span", { class: "hint" }, "Pulsa \"Cargar modelos\" con tu llave puesta abajo para elegir de una lista real.");
-  const apiKey = h("input", { type: "password", autocomplete: "off", placeholder: cfg.hasKey ? `Guardada (termina en …${cfg.keyLast4})` : "Pega aquí tu llave de API" });
+  // autocomplete="new-password" (en vez de "off") es lo que de verdad le dice a Chrome "esto no es
+  // una contraseña de acceso guardada": así deja de buscar hacia atrás un campo de texto para
+  // tratarlo como "usuario" y rellenarlo con una credencial guardada del navegador.
+  const apiKey = h("input", { type: "password", name: "ai-api-key", autocomplete: "new-password", placeholder: cfg.hasKey ? `Guardada (termina en …${cfg.keyLast4})` : "Pega aquí tu llave de API" });
   const status = h("p", { class: "muted" }, cfg.hasKey ? `Llave guardada, termina en …${cfg.keyLast4}. ` : "Sin llave guardada todavía. ",
     cfg.updatedAt ? `Última actualización: ${fmtDate(cfg.updatedAt)} por ${cfg.updatedBy}.` : "");
   const err = h("p", { class: "err", hidden: true, role: "alert" });
@@ -103,7 +110,8 @@ export async function aiConfigView(ctx) {
       toggleManual(false);
       modelMsg.textContent = `${r.models.length} modelo(s) disponible(s).`; modelMsg.className = "hint";
     } catch (e) {
-      const msg = e.message.replace(/\.?$/, "");
+      const raw = e.issues?.length ? e.issues.map((i) => i.message).join(" ") : e.message;
+      const msg = raw.replace(/\.?$/, "");
       modelMsg.textContent = `No se pudieron cargar: ${msg}. Puedes escribir el id a mano.`; modelMsg.className = "err";
       toggleManual(true);
     }
@@ -136,7 +144,7 @@ export async function aiConfigView(ctx) {
       const r = await api("POST", "/api/ai/config/test", { provider: provider.value, apiKey: apiKey.value.trim() || undefined, baseUrl: baseUrl.value.trim() || undefined, model: currentModel() || undefined });
       testOut.textContent = r.ok ? "✓ Conexión correcta." : `✗ ${r.message}`;
       testOut.className = r.ok ? "" : "err";
-    } catch (e) { testOut.textContent = `✗ ${e.message}`; testOut.className = "err"; }
+    } catch (e) { testOut.textContent = `✗ ${e.issues?.length ? e.issues.map((i) => i.message).join(" ") : e.message}`; testOut.className = "err"; }
   };
 
   // Al entrar (o volver) a esta vista, si ya hay una llave guardada se comprueba sola con esa llave —

@@ -205,6 +205,12 @@ export const AiModelsIn = z.object({
   baseUrl: z.string().url().max(300).optional(),
 });
 export const AiAssistIn = z.object({ question: z.string().min(1).max(4000) });
+export const AiConfigTestIn = z.object({
+  provider: AiProvider.optional(),
+  apiKey: z.string().min(10).max(300).optional(),
+  baseUrl: z.string().url().max(300).optional(),
+  model: z.string().min(1).max(200).optional(),
+});
 
 /* ---------- Alertas salientes (webhook) ----------
    Estrictamente informativo: nunca bloquea ni actúa por sí sola, solo avisa cuando aparece un
