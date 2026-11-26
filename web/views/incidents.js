@@ -1,4 +1,4 @@
-import { h, api, panel, empty, seal, fmtDate, toast, copyText, download, formDialog, confirmDialog, openDialog, errorBox, ROLE, md, loadChatDraft, saveChatDraft, clearChatDraft } from "../lib.js";
+import { h, api, panel, empty, seal, fmtDate, toast, copyText, download, formDialog, confirmDialog, openDialog, errorBox, ROLE, md, loadChatDraft, saveChatDraft, clearChatDraft, startThinking } from "../lib.js";
 
 const INCIDENT_CHAT_KEY = "esc:ai-create:incident";
 
@@ -79,10 +79,10 @@ function incidentAiCreatePanel(ctx) {
   const ask = async () => {
     const question = q.value;
     if (!question.trim()) return;
-    status.replaceChildren(h("p", { class: "muted" }, "Pensando…"));
+    const stopThinking = startThinking(status);
     try {
       const r = await api("POST", "/api/incidents/ai-create", { question });
-      status.replaceChildren();
+      stopThinking(); status.replaceChildren();
       history.append(aiMsgCard(question, md(r.answer)));
       draftHistory.push({ question, answer: r.answer });
       const draftAction = r.actions.find((a) => a.tool === "incident_draft" && a.result?.draft);
@@ -90,7 +90,7 @@ function incidentAiCreatePanel(ctx) {
       else history.scrollIntoView({ block: "end" });
       persist();
       q.value = "";
-    } catch (e) { status.replaceChildren(h("p", { class: "err" }, e.message)); }
+    } catch (e) { stopThinking(); status.replaceChildren(h("p", { class: "err" }, e.message)); }
   };
   return panel("Abrir incidente con la IA", h("div", { class: "body stack" },
     h("p", { class: "muted" }, "Describe lo que está pasando y arma el caso conversando. Nada se abre solo: tú confirmas el borrador antes."),
@@ -212,15 +212,15 @@ export async function incidentView(ctx, id) {
   const aiStatus = h("div", {});
   const askAi = async (question, textarea) => {
     if (!question.trim()) return;
-    aiStatus.replaceChildren(h("p", { class: "muted" }, "Pensando…"));
+    const stopThinking = startThinking(aiStatus);
     try {
       const r = await api("POST", `/api/incidents/${id}/ai-assist`, { question });
-      aiStatus.replaceChildren();
+      stopThinking(); aiStatus.replaceChildren();
       aiHistory.append(aiMsgCard(question, md(r.answer), r.createdAt ? `${fmtDate(r.createdAt)}` : "", aiActionNodes(r.actions)));
       aiHistory.scrollIntoView({ block: "end" });
       if (textarea) textarea.value = "";
       if (r.actions.length) reload();
-    } catch (e) { aiStatus.replaceChildren(h("p", { class: "err" }, e.message)); }
+    } catch (e) { stopThinking(); aiStatus.replaceChildren(h("p", { class: "err" }, e.message)); }
   };
   const aiPanel = () => {
     if (!ctx.aiEnabled) return panel("Asistente de IA", h("div", { class: "body" }, h("p", { class: "muted" }, "El módulo de IA no está activado. Un autorizador puede activarlo en Configuración → Integración IA.")));

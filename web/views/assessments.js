@@ -1,4 +1,4 @@
-import { h, api, panel, empty, stateSeal, fmtDate, toast, MODE, TARGET_TYPE, targetText, md, ApiError, loadChatDraft, saveChatDraft, clearChatDraft } from "../lib.js";
+import { h, api, panel, empty, stateSeal, fmtDate, toast, MODE, TARGET_TYPE, targetText, md, ApiError, loadChatDraft, saveChatDraft, clearChatDraft, startThinking } from "../lib.js";
 import { getModules } from "./shared.js";
 
 const ASSESSMENT_CHAT_KEY = "esc:ai-create:assessment";
@@ -42,10 +42,10 @@ function assessmentAiCreatePanel(ctx) {
   const ask = async () => {
     const question = q.value;
     if (!question.trim()) return;
-    status.replaceChildren(h("p", { class: "muted" }, "Pensando…"));
+    const stopThinking = startThinking(status);
     try {
       const r = await api("POST", "/api/assessments/ai-create", { question });
-      status.replaceChildren();
+      stopThinking(); status.replaceChildren();
       history.append(aiMsgCard(question, md(r.answer)));
       draftHistory.push({ question, answer: r.answer });
       const draftAction = r.actions.find((a) => a.tool === "assessment_draft" && a.result?.draft);
@@ -53,7 +53,7 @@ function assessmentAiCreatePanel(ctx) {
       else history.scrollIntoView({ block: "end" });
       persist();
       q.value = "";
-    } catch (e) { status.replaceChildren(h("p", { class: "err" }, e.message)); }
+    } catch (e) { stopThinking(); status.replaceChildren(h("p", { class: "err" }, e.message)); }
   };
   return panel("Crear evaluación con la IA", h("div", { class: "body stack" },
     h("p", { class: "muted" }, "Describe lo que quieres evaluar y arma la autorización conversando. Nada se crea solo: tú confirmas el borrador antes."),

@@ -190,6 +190,22 @@ export function clearChatDraft(key) {
   try { sessionStorage.removeItem(key); } catch { /* best-effort */ }
 }
 
+/* El chat de IA no muestra nada hasta que llega la respuesta completa (no hay streaming aún), así que
+   una pregunta que de verdad tarde unos segundos (modelo más grande, reintento por un 429/503 del
+   proveedor) se siente "colgada" con solo un "Pensando…" fijo. Esto no acelera la respuesta real, pero
+   avisa que sigue en curso en vez de dejar la duda de si quedó pegado. Se usa en los cuatro chats
+   (crear incidente/evaluación y los de dentro de cada caso). */
+export function startThinking(el) {
+  const steps = [
+    [0, "Pensando…"],
+    [3500, "Sigue pensando… la IA está redactando la respuesta."],
+    [9000, "Esto está tardando más de lo normal. Si el proveedor de IA está saturado, ya se está reintentando solo — en un momento llega."],
+  ];
+  el.replaceChildren(h("p", { class: "muted" }, steps[0][1]));
+  const timers = steps.slice(1).map(([delay, text]) => setTimeout(() => el.replaceChildren(h("p", { class: "muted" }, text)), delay));
+  return () => timers.forEach(clearTimeout);
+}
+
 export const panel = (title, body, actions) => h("section", { class: "panel" },
   title ? h("header", {}, h("h3", {}, title), actions ?? null) : null, body);
 export const empty = (title, text, action) => h("div", { class: "empty" }, h("strong", {}, title), text ? h("p", {}, text) : null, action ?? null);

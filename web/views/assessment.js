@@ -1,4 +1,4 @@
-import { h, api, panel, empty, seal, stateSeal, fmtDate, shortHash, toast, confirmDialog, download, copyText, STATE, MODE, SEVERITY, SEV_TONE, TRIAGE, TARGET_TYPE, targetText, md } from "../lib.js";
+import { h, api, panel, empty, seal, stateSeal, fmtDate, shortHash, toast, confirmDialog, download, copyText, STATE, MODE, SEVERITY, SEV_TONE, TRIAGE, TARGET_TYPE, targetText, md, startThinking } from "../lib.js";
 import { plansTable, getModules } from "./shared.js";
 import { assessmentForm } from "./assessments.js";
 
@@ -136,10 +136,10 @@ function aiAssistPanel(ctx, d, reload) {
   const q = h("textarea", { rows: 3, placeholder: "Pídele algo, p. ej.: «revisa los hallazgos y dime si falta algo» o «redacta el informe en borrador con lo confirmado hasta ahora».", onkeydown: (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); ask(); } } });
   const ask = async () => {
     if (!q.value.trim()) return;
-    status.replaceChildren(h("p", { class: "muted" }, "Pensando…"));
+    const stopThinking = startThinking(status);
     try {
       const r = await api("POST", `/api/assessments/${d.id}/ai-assist`, { question: q.value });
-      status.replaceChildren();
+      stopThinking(); status.replaceChildren();
       const actionNodes = r.actions.map((a) => {
         if (a.result?.findingId) return h("p", {}, `✓ Hallazgo registrado (id ${a.result.findingId}).`);
         if (a.result?.text) return h("div", { class: "stack" }, h("strong", {}, "Borrador de informe:"), h("pre", { class: "report" }, a.result.text));
@@ -155,7 +155,7 @@ function aiAssistPanel(ctx, d, reload) {
       history.scrollIntoView({ block: "end" });
       q.value = "";
       if (r.actions.some((a) => a.result?.findingId || a.tool === "scan_initiate" || a.tool === "scan_stop")) reload();
-    } catch (e) { status.replaceChildren(h("p", { class: "err" }, e.message)); }
+    } catch (e) { stopThinking(); status.replaceChildren(h("p", { class: "err" }, e.message)); }
   };
   return panel("Asistente de IA", h("div", { class: "body stack" },
     h("p", { class: "muted" }, "Usa el modelo configurado por tu organización, con los mismos permisos que ya tiene por MCP: puede validar alcance, registrar hallazgos, redactar el informe, analizar cadena de suministro y lanzar módulos — en modo activo (o si el módulo cambia estado) sigue pidiendo primero la aprobación humana de un plan, igual que por MCP o por la consola. Nunca abre ni cierra la evaluación."),
