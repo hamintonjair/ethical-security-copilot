@@ -186,7 +186,9 @@ Esta es la base para que la consola reciba alertas generadas por EDR, identidad/
 - **Firma**: `X-ESC-Timestamp` es la hora Unix en segundos. `X-ESC-Signature` lleva `sha256=<hex>` de HMAC-SHA256 con la clave de la fuente y el mensaje `timestamp + "." + cuerpo JSON exacto`. Solo se aceptan firmas con una diferencia horaria de hasta cinco minutos.
 - **Evento requerido**: `eventId`, `observedAt` (fecha ISO 8601 con zona horaria), `severity`, `category`, `title` y `summary`. `asset` y `data` son opcionales. El cuerpo no puede superar 64 KiB; `eventId` evita guardar dos veces el mismo evento de una fuente.
 - **Efecto**: la plataforma valida, guarda y audita el evento y lo muestra en esta vista. No aplica bloqueos ni abre incidentes automáticamente.
-- **Límite actual**: el receptor acepta el formato común; no consulta aún las APIs nativas de Google, Microsoft, Wazuh ni Cloudflare. Hace falta un adaptador por proveedor. La etiqueta Google Workspace no conecta automáticamente una cuenta. Gmail personal no proporciona los registros administrativos de Workspace; la integración empresarial requerirá autorización de un administrador y permisos concretos.
+- **Google Workspace**: conecta con el botón OAuth desde esta sección. Antes, activa Admin SDK API en Google Cloud, crea un cliente OAuth de tipo aplicación web y registra `https://<servicio>.onrender.com/api/google-workspace/callback` como URI de redirección. En Render configura `GOOGLE_WORKSPACE_CLIENT_ID`, `GOOGLE_WORKSPACE_CLIENT_SECRET` y `GOOGLE_WORKSPACE_REDIRECT_URI` (idéntica a la URI registrada). Después, un authorizer conecta una cuenta del dominio con permiso para ver auditorías. Solo se solicita `admin.reports.audit.readonly`; *Actualizar eventos* consulta los eventos recientes y los incorpora a la lista. Esta primera versión consulta al pulsar el botón, no continuamente.
+- **Cuenta personal Gmail**: no se admite para consultar los registros de inicio de sesión de Google Workspace. La API de Gmail vigila cambios del buzón, que es otro dato y no equivale a auditoría de accesos; esta integración no solicita acceso al contenido del correo.
+- **Otros proveedores**: Microsoft, Wazuh y Cloudflare todavía requieren sus adaptadores propios. El webhook genérico sigue disponible para sistemas que puedan enviar eventos con el formato firmado descrito arriba.
 
 ## 9. Mapa de cobertura: del ataque a la defensa
 
@@ -265,4 +267,5 @@ En modo activo, Claude te dirá que hay un plan pendiente. Apruébalo en la cons
 - MITRE ATT&CK Enterprise: https://attack.mitre.org/matrices/enterprise/
 - RFC 9116 (security.txt): https://www.rfc-editor.org/rfc/rfc9116
 - RFC 8996 (retiro de TLS 1.0 y 1.1): https://www.rfc-editor.org/rfc/rfc8996
+
 

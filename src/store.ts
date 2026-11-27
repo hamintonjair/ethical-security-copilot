@@ -295,6 +295,93 @@ export class Store {
     return (await this.db.query("select e.id,e.external_event_id,e.observed_at,e.severity,e.category,e.title,e.asset,e.summary,e.received_at,i.name integration_name,i.provider from public.security_events e join public.security_integrations i on i.id=e.integration_id order by e.received_at desc limit $1", [limit])).map(r => ({ id: r.id, externalEventId: r.external_event_id, observedAt: iso(r.observed_at), severity: r.severity, category: r.category, title: r.title, asset: r.asset, summary: r.summary, receivedAt: iso(r.received_at), integrationName: r.integration_name, provider: r.provider }));
   }
 
+  /* ---------- Auditoría de inicios de sesión de Google Workspace ---------- */
+  private googleEncKey() { return createHash("sha256").update(Buffer.concat([this.signingKey, Buffer.from("google-workspace-refresh-v1")])).digest(); }
+
+  async createGoogleWorkspaceOAuthState(state: string, actor: string) {
+    await this.db.query("delete from public.google_workspace_oauth_states where created_at < now() - interval '15 minutes'");
+    await this.db.query("insert into public.google_workspace_oauth_states (state_hash,created_by) values ($1,$2)", [sha256(state), actor]);
+  }
+
+  async consumeGoogleWorkspaceOAuthState(state: string): Promise<string | null> {
+    const rows = await this.db.query("delete from public.google_workspace_oauth_states where state_hash=$1 and created_at > now() - interval '15 minutes' returning created_by", [sha256(state)]);
+    return rows[0]?.created_by ?? null;
+  }
+
+  async saveGoogleWorkspaceConnection(email: string, refreshToken: string, actor: string) {
+    const existing = (await this.db.query("select integration_id from public.google_workspace_connections where id=1"))[0];
+    let integrationId = existing?.integration_id as string | undefined;
+    if (!integrationId) {
+      const prior = (await this.db.query("select id from public.security_integrations where provider='google_workspace' order by created_at desc limit 1"))[0];
+      integrationId = prior?.id as string | undefined;
+      if (integrationId) await this.db.query("update public.security_integrations set name=$2,enabled=true,updated_at=now() where id=$1", [integrationId, `Google Workspace (${email})`]);
+      else {
+        integrationId = randomUUID();
+        const unusedSecret = newToken();
+        const encryptedUnusedSecret = encryptSecret(unusedSecret, this.integrationsEncKey());
+        await this.db.query("insert into public.security_integrations (id,name,provider,secret_enc,secret_last4,created_by) values ($1,$2,'google_workspace',$3,$4,$5)",
+          [integrationId, `Google Workspace (${email})`, encryptedUnusedSecret, unusedSecret.slice(-4), actor]);
+      }
+    }
+    const refreshEnc = encryptSecret(refreshToken, this.googleEncKey());
+    await this.db.query(`insert into public.google_workspace_connections (id,integration_id,admin_email,refresh_token_enc,connected_by,last_sync_at,last_sync_error,updated_at)
+      values (1,$1,$2,$3,$4,null,null,now()) on conflict (id) do update set integration_id=excluded.integration_id,admin_email=excluded.admin_email,refresh_token_enc=excluded.refresh_token_enc,connected_by=excluded.connected_by,last_sync_at=null,last_sync_error=null,updated_at=now()`,
+      [integrationId, email.toLowerCase(), refreshEnc, actor]);
+    await this.audit({ actor, role: "authorizer", action: "google_workspace:connected", payload: { adminEmail: email.toLowerCase() } });
+  }
+
+  async googleWorkspaceStatus() {
+    const r = (await this.db.query("select admin_email,last_sync_at,last_sync_error from public.google_workspace_connections where id=1"))[0];
+    return r ? { connected: true, email: r.admin_email, lastSyncAt: r.last_sync_at ? iso(r.last_sync_at) : null, lastSyncError: r.last_sync_error ?? null } : { connected: false, email: null, lastSyncAt: null, lastSyncError: null };
+  }
+
+  async getGoogleWorkspaceCredentials(): Promise<{ integrationId: string; email: string; refreshToken: string } | null> {
+    const r = (await this.db.query("select integration_id,admin_email,refresh_token_enc from public.google_workspace_connections where id=1"))[0];
+    if (!r) return null;
+    return { integrationId: r.integration_id, email: r.admin_email, refreshToken: decryptSecret(r.refresh_token_enc, this.googleEncKey()) };
+  }
+
+  async markGoogleWorkspaceSync(integrationId: string, error: string | null) {
+    await this.db.query("update public.google_workspace_connections set last_sync_at=case when $2::text is null then now() else last_sync_at end,last_sync_error=$2,updated_at=now() where id=1 and integration_id=$1", [integrationId, error?.slice(0, 500) ?? null]);
+  }
+
+  async deleteGoogleWorkspaceConnection() {
+    const r = (await this.db.query("delete from public.google_workspace_connections where id=1 returning integration_id,connected_by"))[0];
+    if (r) {
+      await this.db.query("update public.security_integrations set enabled=false,updated_at=now() where id=$1", [r.integration_id]);
+      await this.audit({ actor: r.connected_by, role: "authorizer", action: "google_workspace:disconnected", payload: {} });
+    }
+  }
+
+  async ingestGoogleWorkspaceLoginActivities(integrationId: string, items: Array<{
+    id?: { time?: string; uniqueQualifier?: string }; actor?: { email?: string }; ipAddress?: string;
+    events?: Array<{ name?: string; type?: string; parameters?: Array<{ name?: string; value?: string; boolValue?: boolean }> }>;
+  }>) {
+    let insertedCount = 0;
+    for (const item of items.slice(0, 1000)) for (const event of (item.events ?? []).slice(0, 30)) {
+      const eventName = event.name ?? event.type ?? "login_activity";
+      const params = Object.fromEntries((event.parameters ?? []).slice(0, 40).map(p => {
+        const name = p.name ?? ""; const value = p.value ?? p.boolValue ?? null;
+        return [name, /secret|token|password|cookie|credential|code/i.test(name) ? "[REDACTED]" : typeof value === "string" ? redact(value, 300) : value];
+      }));
+      const affected = typeof params.affected_email_address === "string" ? params.affected_email_address : item.actor?.email;
+      const isSuspicious = params.is_suspicious === true || params.is_suspicious === "true";
+      const severity = /suspicious|hijacked|attack_warning|password_leak/i.test(eventName) || isSuspicious ? "high" : eventName === "login_failure" ? "medium" : eventName === "login_success" ? "info" : "low";
+      const title = eventName === "login_failure" ? "Intento de inicio de sesión fallido (Google Workspace)" : eventName === "login_success" ? "Inicio de sesión en Google Workspace" : `Actividad de acceso de Google Workspace: ${eventName}`;
+      const summary = `Evento ${eventName}${item.ipAddress ? ` desde IP ${item.ipAddress}` : ""}${event.type ? ` · tipo ${event.type}` : ""}`;
+      const eventTime = item.id?.time && Number.isFinite(Date.parse(item.id.time)) ? new Date(item.id.time).toISOString() : new Date().toISOString();
+      const sourceId = sha256(`${item.id?.uniqueQualifier ?? ""}|${item.id?.time ?? ""}|${eventName}`);
+      const safeData = { source: "google_workspace_reports", eventName, eventType: event.type ?? null, ipAddress: item.ipAddress ?? null, parameters: params };
+      const row = await this.db.query("insert into public.security_events (integration_id,external_event_id,observed_at,severity,category,title,asset,summary,event_data) values ($1,$2,$3,$4,'login',$5,$6,$7,$8) on conflict (integration_id,external_event_id) do nothing returning id",
+        [integrationId, sourceId, eventTime, severity, title, affected ? redact(affected, 300) : null, redact(summary, 1000), JSON.stringify(safeData)]);
+      if (row.length) {
+        insertedCount++;
+        await this.audit({ actor: "integration:google_workspace", role: "agent", action: "security:event_received", payload: { integrationId, provider: "google_workspace", eventId: sourceId, severity, category: "login", title } });
+      }
+    }
+    return insertedCount;
+  }
+
   /** Cambia de estado solo por transiciones válidas; atómico (compara el estado previo). */
   async transition(id: string, to: State, actor: string, role: Role): Promise<boolean> {
     const cur = await this.getAssessment(id);
@@ -410,3 +497,4 @@ export class Store {
     return (await this.db.query("select id,data_json from public.findings where assessment_id=$1 order by created_at, id", [assessmentId])).map(r => ({ id: r.id, data: JSON.parse(r.data_json) }));
   }
 }
+

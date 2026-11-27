@@ -67,12 +67,45 @@ function integrationsPanel(initial) {
   const message = h("div", {});
   const name = h("input", { type: "text", maxlength: "100", placeholder: "Ej.: Wazuh del servidor principal", autocomplete: "off" });
   const provider = h("select", {}, [
-    ["generic", "Webhook compatible (genérico)"], ["google_workspace", "Google Workspace (requiere adaptador)"],
+    ["generic", "Webhook compatible (genérico)"],
     ["microsoft", "Microsoft (requiere adaptador)"], ["wazuh", "Wazuh (requiere adaptador)"],
     ["cloudflare", "Cloudflare (requiere adaptador)"], ["other", "Otro proveedor"],
   ].map(([v, label]) => h("option", { value: v }, label)));
   const list = h("div", { class: "stack" });
   const events = h("div", { class: "stack" });
+  let google = initial.googleWorkspace;
+  const googleStatus = h("p", { class: "muted" });
+  const googleControls = h("div", { class: "row" });
+  const googleFeedback = h("p", { class: "muted", role: "status" });
+  const callbackResult = new URLSearchParams(location.search).get("googleWorkspace");
+  if (callbackResult === "connected") googleFeedback.textContent = "Google Workspace quedó conectado.";
+  const refreshGoogle = async () => { const r = await api("GET", "/api/integrations"); state = r; google = r.googleWorkspace; render(); };
+  const renderGoogle = () => {
+    googleStatus.textContent = !google.configured
+      ? "Falta configurar las credenciales OAuth de Google en el servidor."
+      : google.connected ? `Conectada: ${google.email}. Permiso: lectura de auditoría de inicios de sesión.`
+        : "Conecta una cuenta administradora de Google Workspace. Solo se solicitará lectura de los registros de auditoría.";
+    if (google.lastSyncAt) googleStatus.textContent += ` Última consulta: ${fmtDate(google.lastSyncAt)}.`;
+    if (google.lastSyncError) { googleStatus.textContent += ` Error: ${google.lastSyncError}`; googleStatus.className = "err"; }
+    else googleStatus.className = "muted";
+    googleControls.replaceChildren();
+    if (!google.connected) googleControls.append(h("button", { class: "btn primary", disabled: !google.configured, onclick: async () => {
+      try { const r = await api("POST", "/api/google-workspace/connect", {}); location.assign(r.authorizationUrl); }
+      catch (e) { googleFeedback.textContent = e.message; googleFeedback.className = "err"; }
+    } }, "Conectar con Google Workspace"));
+    else {
+      googleControls.append(h("button", { class: "btn primary", onclick: async () => {
+        googleFeedback.textContent = "Consultando registros de Google…"; googleFeedback.className = "muted";
+        try { const r = await api("POST", "/api/google-workspace/sync", {}); googleFeedback.textContent = `Consulta completada: ${r.received} evento(s) nuevo(s) de ${r.scanned} registros.`; googleFeedback.className = ""; await refreshGoogle(); }
+        catch (e) { googleFeedback.textContent = e.message; googleFeedback.className = "err"; await refreshGoogle().catch(() => {}); }
+      } }, "Actualizar eventos"));
+      googleControls.append(h("button", { class: "btn", onclick: async () => {
+        if (!confirm("¿Desconectar y revocar el acceso de Google Workspace?")) return;
+        try { await api("POST", "/api/google-workspace/disconnect", {}); googleFeedback.textContent = "Google Workspace se desconectó."; googleFeedback.className = "muted"; await refreshGoogle(); }
+        catch (e) { googleFeedback.textContent = e.message; googleFeedback.className = "err"; }
+      } }, "Desconectar"));
+    }
+  };
   const reveal = (endpoint, secret) => {
     const key = h("code", {}, secret);
     const box = panel("Guarda la clave ahora", h("div", { class: "body stack" },
@@ -83,7 +116,8 @@ function integrationsPanel(initial) {
     box.scrollIntoView?.({ behavior: "smooth", block: "center" });
   };
   const render = () => {
-    list.replaceChildren(...(state.integrations.length ? state.integrations.map((it) => panel(it.name,
+    const genericIntegrations = state.integrations.filter(it => it.provider !== "google_workspace");
+    list.replaceChildren(...(genericIntegrations.length ? genericIntegrations.map((it) => panel(it.name,
       h("div", { class: "body stack" },
         h("p", {}, `${it.provider} · ${it.enabled ? "Activa" : "Desactivada"} · clave termina en …${it.secretLast4}`),
         h("p", { class: "muted" }, `Endpoint: ${location.origin}/hooks/security/${it.id}`),
@@ -104,10 +138,14 @@ function integrationsPanel(initial) {
     try { const r = await api("POST", "/api/integrations", { name: name.value.trim(), provider: provider.value }); name.value = ""; await reload(); reveal(r.endpoint, r.secret); toast("Fuente creada."); }
     catch (e) { toast(e.issues?.map(i => i.message).join(" ") || e.message, true); }
   };
+  renderGoogle();
   render();
   const example = `{"eventId":"alert-123","observedAt":"2026-11-27T14:30:00Z","severity":"high","category":"suspicious_login","title":"Inicio de sesión sospechoso","asset":"usuario@empresa.com","summary":"Inicio desde ubicación inusual","data":{"source":"proveedor"}}`;
   return panel("Fuentes de seguridad", h("div", { class: "body stack" },
     h("p", { class: "muted" }, "Entrada segura para alertas de EDR, correo, identidad, firewall, nube y bases de datos. Esta base recibe eventos normalizados y los registra; los conectores nativos de cada proveedor se incorporan por separado."),
+    panel("Google Workspace · accesos e inicios de sesión", h("div", { class: "body stack" },
+      h("p", { class: "muted" }, "Consulta eventos de inicio de sesión del dominio con Google Admin Reports. No conecta buzones personales @gmail.com ni permite bloquear accesos. La primera versión consulta los registros cuando pulsas «Actualizar eventos»."),
+      googleStatus, googleFeedback, googleControls)),
     h("div", { class: "row" }, name, provider, h("button", { class: "btn primary", onclick: create }, "Añadir fuente")),
     h("details", {}, h("summary", {}, "Formato de evento esperado"), h("p", {}, "La petición debe ser POST application/json y estar firmada con HMAC-SHA256. El identificador del evento debe ser único por fuente para evitar duplicados."), h("pre", {}, example)),
     message, list, h("h3", {}, "Eventos recibidos"), events));
@@ -214,3 +252,4 @@ export async function aiConfigView(ctx) {
       testOut)),
     alertsPanel(ctx, acfg), integrationsPanel(integrations)) };
 }
+

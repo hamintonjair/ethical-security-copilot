@@ -21,6 +21,7 @@ import { sendAlertIfDue } from "../alerts.js";
 import { redact } from "../redact.js";
 import { markdownToPdf } from "../pdf.js";
 import { Auth, WEB_ROLES, type Session, type WebRole } from "./auth.js";
+import { completeGoogleWorkspaceAuthorization, disconnectGoogleWorkspace, googleWorkspaceAuthorizationUrl, googleWorkspaceConfigured, syncGoogleWorkspaceLoginEvents } from "../google_workspace.js";
 
 const COOKIE = "esc_session";
 const MAX_BODY = 200_000;
@@ -101,6 +102,7 @@ export function createApi(ctx: ApiCtx) {
   const modules = ctx.modules ?? builtinModules();
   const policy = ctx.policy ?? new PolicyEngine(store, { manifests: new Map([...modules].map(([k, m]) => [k, m.manifest])) });
   const gateway = ctx.gateway ?? new Gateway(policy);
+  const googleEnv = { clientId: process.env.GOOGLE_WORKSPACE_CLIENT_ID, clientSecret: process.env.GOOGLE_WORKSPACE_CLIENT_SECRET, redirectUri: process.env.GOOGLE_WORKSPACE_REDIRECT_URI };
   const routes: Route[] = [];
   const route = (method: string, path: string, roles: WebRole[], h: Handler) => routes.push({ method, re: new RegExp(`^${path.replace(/:id/g, "([0-9a-fA-F-]{36})")}$`), roles, h });
   const who = (s: Session) => ({ actor: s.user.username, role: s.user.role as WebRole });
@@ -454,7 +456,25 @@ export function createApi(ctx: ApiCtx) {
   });
 
   /* ---------- Integraciones entrantes ---------- */
-  route("GET", "/api/integrations", CAN.integrationsConfig, async () => ({ integrations: await store.listSecurityIntegrations(), events: await store.listSecurityEvents(100) }));
+  route("GET", "/api/integrations", CAN.integrationsConfig, async () => ({ integrations: await store.listSecurityIntegrations(), events: await store.listSecurityEvents(100), googleWorkspace: { configured: googleWorkspaceConfigured(googleEnv), ...(await store.googleWorkspaceStatus()) } }));
+  route("POST", "/api/google-workspace/connect", CAN.integrationsConfig, async ({ s }) => ({ authorizationUrl: await googleWorkspaceAuthorizationUrl(store, googleEnv, s.user.username) }));
+  route("POST", "/api/google-workspace/sync", CAN.integrationsConfig, async ({ s }) => {
+    try {
+      const result = await syncGoogleWorkspaceLoginEvents(store, googleEnv);
+      await store.audit({ actor: s.user.username, role: s.user.role as WebRole, action: "google_workspace:events_synced", payload: { received: result.received, scanned: result.scanned } });
+      return result;
+    } catch (e) {
+      const message = (e as Error).message;
+      const connection = await store.getGoogleWorkspaceCredentials().catch(() => null);
+      if (connection) await store.markGoogleWorkspaceSync(connection.integrationId, message);
+      throw new HttpError(502, "GOOGLE_WORKSPACE_SYNC", message);
+    }
+  });
+  route("POST", "/api/google-workspace/disconnect", CAN.integrationsConfig, async ({ s }) => {
+    await disconnectGoogleWorkspace(store);
+    await store.audit({ actor: s.user.username, role: s.user.role as WebRole, action: "google_workspace:revoked_by_authorizer" });
+    return { ok: true };
+  });
   route("POST", "/api/integrations", CAN.integrationsConfig, async ({ s, body, req }) => {
     const input = SecurityIntegrationCreateIn.parse(body);
     const created = await store.createSecurityIntegration(input, s.user.username);
@@ -513,6 +533,18 @@ export function createApi(ctx: ApiCtx) {
   /* ---------- Despacho ---------- */
   return async function handle(req: http.IncomingMessage, res: http.ServerResponse, path: string, query: URLSearchParams) {
     try {
+      if (path === "/api/google-workspace/callback") {
+        if (req.method !== "GET") throw new HttpError(405, "METHOD_NOT_ALLOWED", "Método no permitido.");
+        let result = "error";
+        try {
+          await completeGoogleWorkspaceAuthorization(store, googleEnv, { code: query.get("code") ?? undefined, state: query.get("state") ?? undefined, error: query.get("error") ?? undefined });
+          result = "connected";
+        } catch (e) {
+          console.warn("No se completó el consentimiento de Google Workspace:", (e as Error).message);
+        }
+        res.writeHead(302, { Location: `/app/?googleWorkspace=${result}#/configuracion`, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" });
+        return void res.end();
+      }
       const mutating = req.method !== "GET" && req.method !== "HEAD";
       if (mutating && !originOk(req)) throw new HttpError(403, "BAD_ORIGIN", "Origen no permitido.");
 
@@ -550,4 +582,5 @@ export function createApi(ctx: ApiCtx) {
   };
 }
 export { WEB_ROLES };
+
 

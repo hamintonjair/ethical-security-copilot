@@ -48,6 +48,9 @@ Variables de entorno (créalas en el panel de Render; **nunca** en el repositori
 | `ESC_DATABASE_URL` | Cadena del **Session pooler** de Supabase (Render no tiene IPv6; la conexión directa de Supabase sí lo exige). |
 | `ESC_DATABASE_CA` | Certificado CA de Supabase en PEM (Database → Settings → SSL configuration). TLS siempre se verifica. |
 | `ESC_ALLOWED_HOSTS` | Opcional: dominios propios adicionales. `RENDER_EXTERNAL_HOSTNAME` ya se acepta. |
+| `GOOGLE_WORKSPACE_CLIENT_ID` | ID del cliente OAuth web creado en Google Cloud. |
+| `GOOGLE_WORKSPACE_CLIENT_SECRET` | Secreto del cliente OAuth; solo en Render, nunca en Git o en el navegador. |
+| `GOOGLE_WORKSPACE_REDIRECT_URI` | URL exacta `https://<servicio>.onrender.com/api/google-workspace/callback`, registrada también en Google Cloud. |
 
 Cliente MCP remoto: URL `https://<servicio>.onrender.com/mcp` con cabecera `Authorization: Bearer <ESC_HTTP_TOKEN>`.
 Para el CLI humano apunta a la misma base: `ESC_DATABASE_URL=… ESC_SIGNING_KEY=… npx tsx src/cli.ts …`.
@@ -140,5 +143,8 @@ En *Configuración → Fuentes de seguridad*, un authorizer puede registrar un e
 
 Esquema mínimo: `eventId`, `observedAt` (ISO 8601), `severity` (`info|low|medium|high|critical`), `category`, `title` y `summary`; `asset` y `data` son opcionales. La consola muestra los eventos recibidos.
 
-Esta primera pieza es un receptor genérico, no conectores nativos de Google, Microsoft, Wazuh o Cloudflare. El campo de proveedor clasifica la fuente; un adaptador específico sigue siendo necesario para consultar la API de cada proveedor, gestionar OAuth/permisos y transformar sus alertas a este formato. Gmail personal no equivale a Workspace ni proporciona por sí solo un flujo de auditoría empresarial. La integración nativa de Google Workspace deberá requerir una cuenta administradora y permisos de auditoría; la cuenta Gmail personal tendrá un alcance diferente y no debe recibir permisos amplios de lectura del correo.
+Google Workspace dispone además de un conector OAuth para consultar los eventos de acceso con Admin Reports. Configura las tres variables `GOOGLE_WORKSPACE_*` de Render, activa Admin SDK API en Google Cloud y registra como URI de redirección la URL indicada arriba. Luego un authorizer pulsa *Conectar con Google Workspace* y autoriza con la cuenta del dominio que tenga permiso para consultar auditorías. El alcance solicitado es solo `admin.reports.audit.readonly`; la consola permite traer eventos recientes con *Actualizar eventos*. Esta primera versión sincroniza al pulsar el botón, no en tiempo real.
+
+Una cuenta personal `@gmail.com` no puede usar Reports API para ver intentos de inicio de sesión. El conector no solicita lectura de buzones ni promete esa cobertura para Gmail personal. Microsoft, Wazuh y Cloudflare todavía necesitan adaptadores propios.
+
 
