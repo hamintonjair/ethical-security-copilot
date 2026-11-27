@@ -250,9 +250,10 @@ const INCIDENT_TOOLS: ToolDef[] = [
 ];
 
 export async function runIncidentAssistant(opts: {
-  store: Store; incidentId: string; question: string; requestedBy: string; fetchImpl?: FetchFn;
+  store: Store; incidentId: string; question: string; requestedBy: string; authorizeActions?: boolean; fetchImpl?: FetchFn;
 }): Promise<AiResult> {
   const { store, incidentId, question, requestedBy } = opts;
+  const authorizeActions = opts.authorizeActions === true;
   const fetchImpl = opts.fetchImpl ?? fetch;
   const secret = await store.getAiSecret();
   if (!secret) return { error: "AI_NOT_CONFIGURED", message: "El módulo de IA no está activado o no tiene una llave de API guardada. Ve a Configuración → Integración IA." };
@@ -264,11 +265,15 @@ export async function runIncidentAssistant(opts: {
     ? rec.evidence.map((e, i) => `Evidencia ${i + 1} (${e.kind}) — ${e.description}:\nIOCs: ${JSON.stringify(e.iocs)}\n${redact(e.redactedContent, 1500)}`).join("\n\n")
     : "Sin evidencia registrada todavía.";
   const system = `Eres el asistente de IA del módulo de Incidentes de "Ethical Security Copilot", dentro de la propia plataforma (no por MCP). ` +
-    `Ámbito estricto: SOLO analizas evidencia que el humano te da y generas texto para que ÉL decida y aplique — nunca te conectas a ninguna red, nunca ejecutas nada, ` +
+    (authorizeActions
+      ? `El autorizador/operador ha delegado expresamente, para ESTA consulta, las acciones limitadas de consola que aparecen como herramientas: analizar y guardar evidencia aportada en este chat, actualizar tipos de incidente o herramientas disponibles SOLO con datos confirmados por el humano, generar planes de contención e informes. Usa esas herramientas si son necesarias para completar la petición; no solicites una segunda confirmación dentro del chat para esas acciones autorizadas. `
+      : `No tienes autorización para realizar cambios en el caso durante esta consulta. Puedes orientar en texto y usar solo herramientas de lectura/generación de informe o de plan. Si el humano solicita que guardes análisis de evidencia o actualices tipos/herramientas, pídele que active la autorización puntual de acciones antes. `) +
+    `Límite estricto: la delegación solo permite esas operaciones dentro de Ethical Security Copilot. Nunca te conectas a cuentas o servicios externos ni ejecutas reglas, bloqueos, cambios de contraseña, cierre de sesiones, borrados, notificaciones o contactos. ` +
     `nunca abres ni cierras el caso (eso solo lo hace un humano). "Cerrar el paso, no contraatacar": jamás propongas ni describas atacar, acceder o dañar sistemas de terceros, ` +
-    `ni siquiera los del presunto atacante. Responde siempre en español, de forma clara y concreta. Usa las herramientas disponibles cuando el humano pida contención o un informe. ` +
-    `IMPORTANTE sobre incident_types_set: cuando incident_evidence_analyze te devuelva "suggestedTypes", son solo sugerencias — pregúntale primero al humano cuáles quiere marcar y llama a incident_types_set solo con los que él confirme, nunca con todos automáticamente. ` +
-    `IMPORTANTE sobre incident_targets_set: úsala solo cuando el humano te diga explícitamente qué herramientas de bloqueo (firewall, nginx, Cloudflare) tiene disponibles.\n\n` +
+    `ni siquiera los del presunto atacante. Responde siempre en español, de forma clara y concreta. ` +
+    (authorizeActions
+      ? `Con la autorización puntual activa puedes marcar tipos sustentados por evidencia clara y guardar el análisis pedido. Nunca inventes herramientas disponibles: para incident_targets_set exige que el humano haya indicado cuáles tiene. Las reglas generadas son borradores que el equipo debe revisar y aplicar por separado. `
+      : `Sin autorización puntual, incident_types_set, incident_targets_set e incident_evidence_analyze no están disponibles. `) + `\n\n` +
     `Caso: ${rec.incident.organization} — ${rec.incident.summary}\nEstado: ${rec.incident.status}\nTipos ya marcados: ${rec.incident.types?.length ? rec.incident.types.join(", ") : "ninguno todavía"}\n` +
     `Herramientas de bloqueo ya marcadas: ${rec.incident.containmentTargets?.length ? rec.incident.containmentTargets.join(", ") : "ninguna todavía (se generará para todas por defecto)"}\n\n${evidenceSummary}`;
 
@@ -314,7 +319,9 @@ export async function runIncidentAssistant(opts: {
     return { error: `herramienta desconocida: ${name}` };
   };
 
-  return runAssistant({ provider: secret.provider as Provider, apiKey: secret.apiKey, model: secret.model, baseUrl: secret.baseUrl, system, question, tools: INCIDENT_TOOLS, execTool, fetchImpl });
+  const writeTools = new Set(["incident_evidence_analyze", "incident_types_set", "incident_targets_set"]);
+  const tools = authorizeActions ? INCIDENT_TOOLS : INCIDENT_TOOLS.filter((tool) => !writeTools.has(tool.name));
+  return runAssistant({ provider: secret.provider as Provider, apiKey: secret.apiKey, model: secret.model, baseUrl: secret.baseUrl, system, question, tools, execTool, fetchImpl });
 }
 
 /* =========================== Evaluaciones ===========================
@@ -571,3 +578,4 @@ export async function runAssessmentDraftAssistant(opts: { store: Store; question
   };
   return runAssistant({ provider: secret.provider as Provider, apiKey: secret.apiKey, model: secret.model, baseUrl: secret.baseUrl, system, question, tools: ASSESSMENT_DRAFT_TOOLS, execTool, fetchImpl });
 }
+
