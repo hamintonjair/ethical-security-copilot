@@ -13,6 +13,7 @@ const INCIDENT_TYPES = [
   ["ddos", "Denegación de servicio (DDoS)"],
   ["data_breach", "Fuga / robo de datos"],
   ["unauthorized_access", "Acceso no autorizado"],
+  ["whatsapp_account_takeover", "Robo de cuenta de WhatsApp"],
   ["web_attack", "Ataque web (SQLi, XSS, defacement…)"],
   ["other", "Otro"],
 ];
@@ -252,6 +253,18 @@ export async function incidentView(ctx, id) {
         h("button", { class: "btn small", onclick: editTargets }, "Marcar / editar herramientas de bloqueo"),
         d.status === "open" ? h("button", { class: "btn", onclick: () => setStatus("contained") }, "Marcar como contenido") : null,
         h("button", { class: "btn danger", onclick: () => setStatus("closed") }, "Cerrar incidente")) : null)),
+    (d.types ?? []).includes("whatsapp_account_takeover") ? panel("Recuperación de cuenta de WhatsApp", h("div", { class: "body stack" },
+      h("p", { class: "muted" }, "Esta consola te guía y registra el incidente; no puede recuperar la cuenta por ti ni debe recibir códigos de WhatsApp."),
+      h("ol", {},
+        h("li", {}, "En el teléfono de la persona afectada, abre la aplicación oficial de WhatsApp, vuelve a registrar su número y solicita el código por SMS o llamada. Escribe el código solo en WhatsApp; nunca lo compartas ni lo pegues en este caso."),
+        h("li", {}, "Si alguien activó un PIN de verificación en dos pasos que la persona no conoce, no lo adivines. Usa las opciones de recuperación que muestre WhatsApp y sigue sus tiempos de espera."),
+        h("li", {}, "Si la persona perdió el acceso a su SIM o número, contacta al operador móvil para bloquear la SIM y solicitar otra con el mismo número."),
+        h("li", {}, "Al recuperar la cuenta, revisa Dispositivos vinculados y cierra los que no reconozcas; activa la verificación en dos pasos con correo de recuperación y avisa a tus contactos por otro canal.")
+      ),
+      h("div", { class: "row" },
+        h("a", { class: "btn small", href: "https://faq.whatsapp.com/506595211487528/?locale=es_LA", target: "_blank", rel: "noopener noreferrer" }, "Ayuda oficial: registro y verificación"),
+        h("a", { class: "btn small", href: "https://faq.whatsapp.com/1007324800132703/?locale=es_LA", target: "_blank", rel: "noopener noreferrer" }, "Ayuda oficial: recuperar tras pérdida o robo")
+      ))) : null,
     (d.types ?? []).length ? panel("Opciones de bloqueo según el tipo marcado", h("div", { class: "body stack" },
       h("p", { class: "muted" }, "Guía de contención por tipo de incidente. Como siempre: tú la ejecutas en tu propia infraestructura, nada se aplica desde aquí."),
       ...(d.types ?? []).map((t) => h("details", { open: (d.types ?? []).length === 1 }, h("summary", {}, TYPE_LABEL[t] ?? t), h("ul", {}, (d.guidance?.[t] ?? []).map((g) => h("li", {}, g))))))) : null,

@@ -9,7 +9,7 @@ export interface Pattern { title: string; severity: "info" | "low" | "medium" | 
 /* ---------- Tipos de incidente ----------
    El humano los marca al abrir o editar el caso (check-out). La detección automática solo SUGIERE
    a partir de la evidencia analizada; nunca los marca por sí sola — el humano decide si aceptarlos. */
-export const IncidentTypeValues = ["phishing_email", "network_intrusion", "malware_ransomware", "ddos", "data_breach", "unauthorized_access", "web_attack", "other"] as const;
+export const IncidentTypeValues = ["phishing_email", "network_intrusion", "malware_ransomware", "ddos", "data_breach", "unauthorized_access", "whatsapp_account_takeover", "web_attack", "other"] as const;
 export type IncidentTypeT = typeof IncidentTypeValues[number];
 
 export const ContainmentToolValues = ["firewall", "nginx", "cloudflare"] as const;
@@ -27,6 +27,7 @@ export const INCIDENT_TYPE_LABELS: Record<IncidentTypeT, string> = {
   ddos: "Denegación de servicio (DDoS)",
   data_breach: "Fuga / robo de datos",
   unauthorized_access: "Acceso no autorizado",
+  whatsapp_account_takeover: "Robo de cuenta de WhatsApp",
   web_attack: "Ataque web (inyección, fuerza bruta, escaneo)",
   other: "Otro",
 };
@@ -68,6 +69,13 @@ export const TYPE_GUIDANCE: Record<IncidentTypeT, string[]> = {
     "Forzar el cierre de sesión y el cambio de contraseña en la cuenta afectada.",
     "Revisar qué acciones se realizaron con esa cuenta mientras estuvo comprometida.",
     "Activar autenticación multifactor (MFA) si no estaba activa.",
+  ],
+  whatsapp_account_takeover: [
+    "No compartas con nadie el código de registro por SMS o llamada; introdúcelo únicamente en la aplicación oficial de WhatsApp.",
+    "Vuelve a registrar tu número desde tu teléfono. Al completar el registro, WhatsApp cierra las sesiones de otros dispositivos.",
+    "Si perdiste el acceso a la SIM, contacta a tu operador para bloquearla y recuperar el mismo número.",
+    "Si aparece un PIN de verificación en dos pasos que no reconoces, no lo adivines: sigue la recuperación oficial de WhatsApp.",
+    "Después de recuperar el acceso, cierra dispositivos vinculados que no reconozcas, activa la verificación en dos pasos y avisa a tus contactos por otro canal.",
   ],
   web_attack: [
     "Bloquear las IPs atacantes en tu WAF, firewall o nginx.",

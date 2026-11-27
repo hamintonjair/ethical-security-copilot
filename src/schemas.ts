@@ -144,7 +144,7 @@ export const ReportGenerateIn = z.object({
 /* ---------- Incidentes (Respuesta a Incidentes / Defensa Activa) ----------
    Solo analiza evidencia que la organización aporta y genera reglas/informes para que ELLOS
    los apliquen en su propia infraestructura. No abre ninguna conexión de red. */
-export const IncidentType = z.enum(["phishing_email", "network_intrusion", "malware_ransomware", "ddos", "data_breach", "unauthorized_access", "web_attack", "other"]);
+export const IncidentType = z.enum(["phishing_email", "network_intrusion", "malware_ransomware", "ddos", "data_breach", "unauthorized_access", "whatsapp_account_takeover", "web_attack", "other"]);
 // Herramientas de bloqueo que la organización ya tiene disponibles (firewall/iptables-ufw, nginx, Cloudflare).
 // Marcarlas al abrir el caso solo sirve para preseleccionar el plan de contención; no excluye generar para "all".
 export const ContainmentTool = z.enum(["firewall", "nginx", "cloudflare"]);
@@ -154,10 +154,10 @@ export const IncidentCreateIn = z.object({
   contactEmail: z.string().email(),
   summary: z.string().min(5).max(2000),
   affectedAssets: z.array(z.string().max(200)).max(50).default([]),
-  types: z.array(IncidentType).max(8).default([]), // marcados por el humano al abrir el caso; editables después
+  types: z.array(IncidentType).max(9).default([]), // marcados por el humano al abrir el caso; editables después
   containmentTargets: z.array(ContainmentTool).max(3).default([]), // herramientas de bloqueo que usará el equipo; [] = todas
 });
-export const IncidentTypesIn = z.object({ types: z.array(IncidentType).max(8) });
+export const IncidentTypesIn = z.object({ types: z.array(IncidentType).max(9) });
 export const IncidentTargetsIn = z.object({ targets: z.array(ContainmentTool).max(3) });
 export const IncidentEvidenceIn = z.object({
   incidentId: z.string().uuid(),
