@@ -390,6 +390,40 @@ test("módulo de IA (Incidentes) también funciona con Gemini", async () => {
   await freshStore.close();
 });
 
+
+test("Gemini acepta herramientas de consola autorizadas y guarda evidencia sin constraints JSON incompatibles", async () => {
+  const freshStore = await Store.open("memory", KEY);
+  await freshStore.setAiConfig({ enabled: true, provider: "gemini", model: "gemini-2.5-pro", apiKey: "sk-gem-test" }, "ana");
+  const inc = await freshStore.createIncident({ organization: "Org", contactName: "A", contactEmail: "a@demo.test", summary: "Prueba ficticia", affectedAssets: [] }, "ana");
+
+  let call = 0;
+  const fetchImpl = (async (_url: any, opts: any) => {
+    call++;
+    const body = JSON.parse(opts.body);
+    const declarations = body.tools[0].functionDeclarations;
+    assert.ok(declarations.some((t: any) => t.name === "incident_evidence_analyze"));
+    const schemaText = JSON.stringify(declarations);
+    assert.doesNotMatch(schemaText, /"(?:maxLength|minLength|minimum|maximum|minItems|maxItems)"/);
+    if (call === 1) return new Response(JSON.stringify({ candidates: [{ content: { parts: [
+      { functionCall: { name: "incident_evidence_analyze", args: { kind: "other", description: "Alerta ficticia", content: "phishing sospechoso en login-facebook.example.invalid" } } },
+    ] } }] }), { status: 200 });
+    if (call === 2) return new Response(JSON.stringify({ candidates: [{ content: { parts: [
+      { functionCall: { name: "incident_types_set", args: { types: ["phishing_email"] } } },
+    ] } }] }), { status: 200 });
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "Análisis guardado y tipo phishing marcado." }] } }] }), { status: 200 });
+  }) as typeof fetch;
+
+  const r = await runIncidentAssistant({ store: freshStore, incidentId: inc.id, question: "Analiza y guarda evidencia de esta alerta ficticia; marca phishing si está respaldado.", requestedBy: "ana", authorizeActions: true, fetchImpl });
+  assert.ok(!("error" in r), JSON.stringify(r));
+  if ("error" in r) throw new Error("unreachable");
+  assert.equal(r.actions.length, 2);
+  assert.equal(call, 3);
+  const saved = await freshStore.getIncident(inc.id);
+  assert.equal(saved?.evidence.length, 1);
+  assert.deepEqual(saved?.incident.types, ["phishing_email"]);
+  await freshStore.close();
+});
+
 /* ---------- Chat de creación: solo arma un borrador, nunca abre el caso ni crea la evaluación ---------- */
 
 test("IA (chat de creación de incidente): arma el borrador pero no abre ningún caso", async () => {

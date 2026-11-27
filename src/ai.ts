@@ -180,7 +180,16 @@ async function runGeminiLoop(opts: RunOpts): Promise<AiResult> {
   type Part = { text?: string; functionCall?: { name: string; args?: Record<string, unknown> }; functionResponse?: { name: string; response: unknown } };
   const contents: Array<{ role: string; parts: Part[] }> = [{ role: "user", parts: [{ text: opts.question.slice(0, 4000) }] }];
   const actions: AiAction[] = [];
-  const tools = [{ functionDeclarations: opts.tools.map((t) => ({ name: t.name, description: t.description, parameters: t.input_schema })) }];
+  // Gemini accepts a smaller JSON Schema subset than other providers. Keep bounds in our
+  // tool handlers and omit unsupported validation keywords so authorized tools do not trigger HTTP 400.
+  const geminiSchema = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(geminiSchema);
+    if (!value || typeof value !== "object") return value;
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => !["maxLength", "minLength", "minimum", "maximum", "minItems", "maxItems"].includes(key))
+      .map(([key, child]) => [key, geminiSchema(child)]));
+  };
+  const tools = [{ functionDeclarations: opts.tools.map((t) => ({ name: t.name, description: t.description, parameters: geminiSchema(t.input_schema) as Record<string, unknown> })) }];
   for (let i = 0; i < MAX_ITERS; i++) {
     const res = await fetchWithRetry(opts.fetchImpl, url, {
       method: "POST",
@@ -283,9 +292,10 @@ export async function runIncidentAssistant(opts: {
       return { error: "HUMAN_AUTHORIZATION_REQUIRED", message: "El autorizador debe activar la delegación puntual de acciones para esta consulta." };
     if (name === "incident_evidence_analyze") {
       const content = String(input.content ?? "").slice(0, MAX_EVIDENCE_CHARS);
+      const description = String(input.description ?? "evidencia aportada en el chat de IA").slice(0, 300);
       const kind = (["log", "email_headers", "other"].includes(String(input.kind)) ? input.kind : "other") as "log" | "email_headers" | "other";
       const r = kind === "email_headers" ? analyzeEmailHeaders(content) : analyzeLog(content);
-      const saved = await store.addIncidentEvidence(incidentId, { kind, description: String(input.description ?? "evidencia aportada en el chat de IA"), redactedContent: redact(content, 8000), iocs: r.iocs }, actor);
+      const saved = await store.addIncidentEvidence(incidentId, { kind, description, redactedContent: redact(content, 8000), iocs: r.iocs }, actor);
       if (saved === null || saved === "CLOSED") return { error: "no se pudo guardar la evidencia" };
       const suggestedTypes = suggestIncidentTypes(kind, r.patterns).map((s) => ({ ...s, guidance: TYPE_GUIDANCE[s.type] }));
       return { evidenceId: saved.id, facts: r.facts, patterns: r.patterns, iocs: r.iocs, suggestedTypes,
