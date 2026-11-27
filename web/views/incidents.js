@@ -42,6 +42,53 @@ const pickFrom = (options, title, intro, selected = []) => openDialog((close) =>
 });
 const pickTypes = (title, intro, selected = []) => pickFrom(INCIDENT_TYPES, title, intro, selected);
 const pickTargets = (title, intro, selected = []) => pickFrom(CONTAINMENT_TOOLS, title, intro, selected);
+const whatsappRecoverySteps = [
+  {
+    title: "Contén el engaño y protege a tus contactos",
+    body: "Desde otro canal, avisa a tus contactos que no envíen dinero ni compartan códigos por mensajes de tu cuenta. Conserva capturas y horas como evidencia. Si también perdiste el teléfono o la SIM, llama a tu operador para bloquear la SIM.",
+  },
+  {
+    title: "Recupera el control de tu número",
+    body: "Si ya no controlas la línea, solicita a tu operador una SIM de reemplazo con el mismo número. WhatsApp necesita que tengas acceso al número asociado.",
+  },
+  {
+    title: "Vuelve a registrar tu número en WhatsApp",
+    body: "Abre la aplicación oficial de WhatsApp en tu teléfono, escribe tu número en formato internacional y solicita el código por SMS o llamada. Introduce ese código únicamente dentro de WhatsApp. Cuando el registro se complete, WhatsApp cerrará la sesión de los otros dispositivos.",
+  },
+  {
+    title: "Resuelve la verificación en dos pasos",
+    body: "Si WhatsApp solicita un PIN que no reconoces, no lo adivines ni lo compartas. Usa el correo de recuperación si está disponible o sigue las opciones y tiempos que indique el proceso oficial de WhatsApp.",
+  },
+  {
+    title: "Asegura la cuenta recuperada",
+    body: "En WhatsApp, revisa Dispositivos vinculados y cierra cualquier sesión que no reconozcas. Activa la verificación en dos pasos con un correo de recuperación. Revisa si el atacante pidió dinero o envió mensajes y conserva esa evidencia en el incidente.",
+  },
+];
+function openWhatsappRecoveryWizard() {
+  return openDialog((close) => {
+    let index = 0;
+    const content = h("div", { class: "stack" });
+    const render = () => {
+      const step = whatsappRecoverySteps[index];
+      content.replaceChildren(
+        h("h2", {}, "Asistente de recuperación de WhatsApp"),
+        h("p", { class: "muted" }, `Paso ${index + 1} de ${whatsappRecoverySteps.length}`),
+        h("h3", {}, step.title),
+        h("p", {}, step.body),
+        h("p", { class: "muted" }, "Ethical Security Copilot no recibe, guarda ni envía códigos de verificación o PIN. La recuperación se completa en WhatsApp y con el operador telefónico."),
+        h("div", { class: "actions" },
+          h("button", { type: "button", class: "btn", disabled: index === 0, onclick: () => { index--; render(); } }, "Anterior"),
+          h("button", { type: "button", class: "btn", onclick: () => close(null) }, "Cerrar"),
+          index < whatsappRecoverySteps.length - 1
+            ? h("button", { type: "button", class: "btn primary", onclick: () => { index++; render(); } }, "Siguiente")
+            : h("button", { type: "button", class: "btn primary", onclick: () => close(true) }, "Finalizar")
+        )
+      );
+    };
+    render();
+    return content;
+  });
+}
 
 /** Chat para abrir un caso conversando. La IA solo arma un borrador (incident_draft); el caso lo abre
  * el humano con un clic, que llama a la misma ruta de siempre. Al confirmar, esta conversación pasa
@@ -254,7 +301,8 @@ export async function incidentView(ctx, id) {
         d.status === "open" ? h("button", { class: "btn", onclick: () => setStatus("contained") }, "Marcar como contenido") : null,
         h("button", { class: "btn danger", onclick: () => setStatus("closed") }, "Cerrar incidente")) : null)),
     (d.types ?? []).includes("whatsapp_account_takeover") ? panel("Recuperación de cuenta de WhatsApp", h("div", { class: "body stack" },
-      h("p", { class: "muted" }, "Esta consola te guía y registra el incidente; no puede recuperar la cuenta por ti ni debe recibir códigos de WhatsApp."),
+      h("p", { class: "muted" }, "Este asistente te acompaña paso a paso. La recuperación requiere verificar el número dentro de WhatsApp; la consola no puede solicitar códigos ni acceder a la cuenta por ti."),
+      h("button", { class: "btn primary", onclick: openWhatsappRecoveryWizard }, "Iniciar recuperación asistida"),
       h("ol", {},
         h("li", {}, "En el teléfono de la persona afectada, abre la aplicación oficial de WhatsApp, vuelve a registrar su número y solicita el código por SMS o llamada. Escribe el código solo en WhatsApp; nunca lo compartas ni lo pegues en este caso."),
         h("li", {}, "Si alguien activó un PIN de verificación en dos pasos que la persona no conoce, no lo adivines. Usa las opciones de recuperación que muestre WhatsApp y sigue sus tiempos de espera."),
