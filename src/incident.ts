@@ -9,7 +9,7 @@ export interface Pattern { title: string; severity: "info" | "low" | "medium" | 
 /* ---------- Tipos de incidente ----------
    El humano los marca al abrir o editar el caso (check-out). La detección automática solo SUGIERE
    a partir de la evidencia analizada; nunca los marca por sí sola — el humano decide si aceptarlos. */
-export const IncidentTypeValues = ["phishing_email", "network_intrusion", "malware_ransomware", "ddos", "data_breach", "unauthorized_access", "whatsapp_account_takeover", "web_attack", "other"] as const;
+export const IncidentTypeValues = ["phishing_email", "network_intrusion", "malware_ransomware", "ddos", "data_breach", "unauthorized_access", "whatsapp_account_takeover", "facebook_account_takeover", "web_attack", "other"] as const;
 export type IncidentTypeT = typeof IncidentTypeValues[number];
 
 export const ContainmentToolValues = ["firewall", "nginx", "cloudflare"] as const;
@@ -28,6 +28,7 @@ export const INCIDENT_TYPE_LABELS: Record<IncidentTypeT, string> = {
   data_breach: "Fuga / robo de datos",
   unauthorized_access: "Acceso no autorizado",
   whatsapp_account_takeover: "Robo de cuenta de WhatsApp",
+  facebook_account_takeover: "Robo de cuenta de Facebook / Meta",
   web_attack: "Ataque web (inyección, fuerza bruta, escaneo)",
   other: "Otro",
 };
@@ -76,6 +77,14 @@ export const TYPE_GUIDANCE: Record<IncidentTypeT, string[]> = {
     "Si perdiste el acceso a la SIM, contacta a tu operador para bloquearla y recuperar el mismo número.",
     "Si aparece un PIN de verificación en dos pasos que no reconoces, no lo adivines: sigue la recuperación oficial de WhatsApp.",
     "Después de recuperar el acceso, cierra dispositivos vinculados que no reconozcas, activa la verificación en dos pasos y avisa a tus contactos por otro canal.",
+  ],
+  facebook_account_takeover: [
+    "Confirma que el titular está presente y autorizó expresamente la asistencia; no pidas ni guardes contraseñas, códigos, cookies de sesión o documentos de identidad.",
+    "Si el titular aún tiene una sesión abierta en un dispositivo suyo, úsala para proteger la cuenta desde los ajustes oficiales: cambia la contraseña, revisa los correos y teléfonos asociados y cierra las sesiones desconocidas.",
+    "Si perdió el acceso, inicia el proceso oficial desde https://www.facebook.com/hacked en un dispositivo y red que el titular haya usado antes. El titular debe completar personalmente cualquier contraseña, código, CAPTCHA o verificación de identidad.",
+    "Si también perdió el correo o el número vinculado, recupera primero ese medio con su proveedor de correo o compañía móvil; en caso de sospecha de duplicado de SIM, contacta al operador por un canal oficial.",
+    "Para una Página o activos empresariales, otro administrador legítimo puede revisar roles y accesos del portafolio comercial; si la cuenta o los anuncios son empresariales, contacta el soporte disponible en Meta Business Support Home.",
+    "Tras recuperar acceso, elimina métodos de contacto y sesiones no reconocidos, activa autenticación en dos pasos, revisa administradores, anuncios, pagos y publicaciones, y conserva evidencia del incidente.",
   ],
   web_attack: [
     "Bloquear las IPs atacantes en tu WAF, firewall o nginx.",
@@ -226,3 +235,4 @@ export function buildIncidentReport(inc: { organization: string; contactName: st
 }
 
 export const MAX_EVIDENCE_CHARS = 50_000;
+
