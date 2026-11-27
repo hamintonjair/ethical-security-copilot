@@ -453,8 +453,10 @@ export function createApi(ctx: ApiCtx) {
   });
 
   route("POST", "/api/incidents/:id/ai-assist", CAN.incidentWork, async ({ s, params, body }) => {
-    const { question } = AiAssistIn.parse(body);
-    const r = await runIncidentAssistant({ store, incidentId: params[0], question, requestedBy: s.user.username });
+    const { question, authorizeActions } = AiAssistIn.parse(body);
+    if (authorizeActions && !HUMAN_OPS.includes(s.user.role)) throw new HttpError(403, "ROLE_NOT_ALLOWED", "Solo un autorizador u operador puede delegar acciones de consola a la IA.");
+    if (authorizeActions) await store.audit({ actor: s.user.username, role: s.user.role as any, action: "incident:ai_actions_authorized", assessmentId: params[0], payload: { scope: ["evidence_analyze", "incident_types_set", "incident_targets_set"], oneRequest: true } });
+    const r = await runIncidentAssistant({ store, incidentId: params[0], question, requestedBy: s.user.username, authorizeActions });
     if ("error" in r) throw new HttpError(400, r.error, r.message);
     const saved = await store.addAiMessage("incident", params[0], question, r.answer, s.user.username);
     return { ...r, messageId: saved.id, createdAt: saved.createdAt };
@@ -527,3 +529,4 @@ export function createApi(ctx: ApiCtx) {
   };
 }
 export { WEB_ROLES };
+
