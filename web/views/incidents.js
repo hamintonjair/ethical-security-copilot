@@ -338,11 +338,11 @@ export async function incidentView(ctx, id) {
     h("p", { class: "q" }, question), answerNode, ...actionNodes, meta ? h("p", { class: "meta" }, meta) : null);
   const aiHistory = h("div", { class: "ai-history" }, ...(d.aiMessages ?? []).map((m) => aiMsgCard(m.question, md(m.answer), `${m.actor} · ${fmtDate(m.createdAt)}`)));
   const aiStatus = h("div", {});
-  const askAi = async (question, textarea) => {
+  const askAi = async (question, textarea, authorizeActions = false) => {
     if (!question.trim()) return { error: "Escribe una pregunta para la IA." };
     const stopThinking = startThinking(aiStatus);
     try {
-      const r = await api("POST", `/api/incidents/${id}/ai-assist`, { question });
+      const r = await api("POST", `/api/incidents/${id}/ai-assist`, { question, authorizeActions });
       stopThinking(); aiStatus.replaceChildren();
       aiHistory.append(aiMsgCard(question, md(r.answer), r.createdAt ? `${fmtDate(r.createdAt)}` : "", aiActionNodes(r.actions)));
       aiHistory.scrollIntoView({ block: "end" });
@@ -353,10 +353,14 @@ export async function incidentView(ctx, id) {
   };
   const aiPanel = () => {
     if (!ctx.aiEnabled) return panel("Asistente de IA", h("div", { class: "body" }, h("p", { class: "muted" }, "El módulo de IA no está activado. Un autorizador puede activarlo en Configuración → Integración IA.")));
-    const q = h("textarea", { rows: 3, placeholder: "Pídele algo, p. ej.: «revisa la evidencia y dime qué hacer» o «genera el plan de contención con los IOCs que ya tenemos».", onkeydown: (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); askAi(q.value, q); } } });
+    const delegate = h("input", { type: "checkbox" });
+    const q = h("textarea", { rows: 3, placeholder: "Pídele algo, p. ej.: «revisa la evidencia y dime qué hacer» o «genera el plan de contención con los IOCs que ya tenemos».", onkeydown: (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } } });
+    const send = async () => { const authorized = delegate.checked; delegate.checked = false; await askAi(q.value, q, authorized); };
     return panel("Asistente de IA", h("div", { class: "body stack" },
-      h("p", { class: "muted" }, "Usa el modelo configurado por tu organización. Solo analiza y redacta; nunca ejecuta nada por sí solo ni abre o cierra el caso."),
-      aiHistory, q, h("button", { class: "btn primary", onclick: () => askAi(q.value, q) }, "Preguntar a la IA"), aiStatus));
+      h("p", { class: "muted" }, "La IA solo actúa cuando se lo pides. Para que guarde análisis o actualice tipos/herramientas del caso, marca la autorización puntual antes de enviar. No controla cuentas externas ni aplica bloqueos."),
+      aiHistory, q,
+      h("label", { class: "row", style: "align-items:flex-start" }, delegate, h("span", { class: "muted" }, "Autorizar acciones limitadas de consola en esta consulta: guardar análisis de evidencia y actualizar tipos/herramientas. No aplica cambios fuera de esta plataforma.")),
+      h("button", { class: "btn primary", onclick: send }, "Preguntar a la IA"), aiStatus));
   };
 
   const reportBox = h("div", {});

@@ -204,7 +204,7 @@ export const AiModelsIn = z.object({
   apiKey: z.string().min(10).max(300).optional(), // omitido => usa la llave ya guardada
   baseUrl: z.string().url().max(300).optional(),
 });
-export const AiAssistIn = z.object({ question: z.string().min(1).max(4000) });
+export const AiAssistIn = z.object({ question: z.string().min(1).max(4000), authorizeActions: z.boolean().default(false) });
 export const AiConfigTestIn = z.object({
   provider: AiProvider.optional(),
   apiKey: z.string().min(10).max(300).optional(),
