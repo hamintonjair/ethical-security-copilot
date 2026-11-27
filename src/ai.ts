@@ -196,7 +196,13 @@ async function runGeminiLoop(opts: RunOpts): Promise<AiResult> {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ system_instruction: { parts: [{ text: opts.system }] }, contents, tools, generationConfig: { maxOutputTokens: MAX_TOKENS } }),
     });
-    if (!res.ok) return { error: "AI_UPSTREAM_ERROR", message: upstreamErrorMessage("Gemini", res.status, opts.model) };
+    if (!res.ok) {
+      const message = upstreamErrorMessage("Gemini", res.status, opts.model);
+      // A tool call may already have changed the incident before a later model turn fails.
+      // Preserve and report those completed actions instead of hiding them behind an error.
+      if (actions.length) return { answer: `La IA completó ${actions.length} acción(es) autorizada(s) dentro del caso, pero no pudo redactar el cierre porque ${message} Revisa las acciones registradas y vuelve a pedir un resumen si hace falta.`, actions };
+      return { error: "AI_UPSTREAM_ERROR", message };
+    }
     const data = await res.json() as { candidates?: Array<{ content: { parts: Part[] } }> };
     const parts = data.candidates?.[0]?.content?.parts ?? [];
     const calls = parts.filter((p) => p.functionCall);
