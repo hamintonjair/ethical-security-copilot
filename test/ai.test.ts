@@ -424,6 +424,29 @@ test("Gemini acepta herramientas de consola autorizadas y guarda evidencia sin c
   await freshStore.close();
 });
 
+
+test("Gemini conserva y confirma acciones autorizadas si falla el turno final", async () => {
+  const freshStore = await Store.open("memory", KEY);
+  await freshStore.setAiConfig({ enabled: true, provider: "gemini", model: "gemini-2.5-pro", apiKey: "sk-gem-test" }, "ana");
+  const inc = await freshStore.createIncident({ organization: "Org", contactName: "A", contactEmail: "a@demo.test", summary: "Prueba ficticia", affectedAssets: [] }, "ana");
+  let call = 0;
+  const fetchImpl = (async () => {
+    call++;
+    if (call === 1) return new Response(JSON.stringify({ candidates: [{ content: { parts: [
+      { functionCall: { name: "incident_evidence_analyze", args: { kind: "other", description: "Alerta ficticia", content: "phishing de prueba" } } },
+    ] } }] }), { status: 200 });
+    return new Response(JSON.stringify({ error: { message: "fallo posterior" } }), { status: 400 });
+  }) as typeof fetch;
+
+  const r = await runIncidentAssistant({ store: freshStore, incidentId: inc.id, question: "Guarda y analiza esta evidencia ficticia", requestedBy: "ana", authorizeActions: true, fetchImpl });
+  assert.ok(!("error" in r), "las acciones ejecutadas deben devolverse aunque falle el turno siguiente");
+  if ("error" in r) throw new Error("unreachable");
+  assert.equal(r.actions.length, 1);
+  assert.match(r.answer, /no pudo redactar el cierre/);
+  assert.equal((await freshStore.getIncident(inc.id))?.evidence.length, 1);
+  await freshStore.close();
+});
+
 /* ---------- Chat de creación: solo arma un borrador, nunca abre el caso ni crea la evaluación ---------- */
 
 test("IA (chat de creación de incidente): arma el borrador pero no abre ningún caso", async () => {
