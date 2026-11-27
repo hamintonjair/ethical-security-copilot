@@ -371,6 +371,28 @@ export async function incidentView(ctx, id) {
       h("p", { class: "muted" }, "IOCs: ", ["ips", "domains", "urls", "hashes", "emails"].map((k) => (e.iocs?.[k]?.length ? `${k} (${e.iocs[k].length}): ${e.iocs[k].join(", ")}` : null)).filter(Boolean).join(" · ") || "ninguno"),
       h("pre", { class: "report" }, e.redactedContent)))) : [empty("Sin evidencia todavía", "Añade un log o unas cabeceras de correo para empezar el análisis.")];
 
+  const typeAiCard = (type) => {
+    const answer = h("div", { class: "stack" });
+    const ask = h("button", { class: "btn small primary", type: "button", onclick: async () => {
+      ask.disabled = true;
+      answer.replaceChildren(h("p", { class: "muted" }, "La IA está preparando el plan para este tipo de incidente…"));
+      const guidance = d.guidance?.[type] ?? [];
+      const result = await askAi(
+        `Prepara el plan de respuesta para este incidente de tipo «${TYPE_LABEL[type] ?? type}». Resumen del caso: ${d.summary}. Activos afectados: ${(d.affectedAssets ?? []).join(", ") || "no especificados"}. Evidencia disponible: ${(d.evidence ?? []).length} elemento(s). Usa como contexto esta guía curada: ${guidance.join(" | ")}. Prioriza las próximas acciones y separa: (1) análisis que puedes hacer en la plataforma, (2) pasos que el titular/equipo debe realizar, (3) cambios con impacto que requieren confirmación humana antes de ejecutarse. No ejecutes cambios, bloqueos, cierres de sesión, borrados, notificaciones ni contacto con terceros; entrega solo el plan y marca cualquier dato que falte. Nunca solicites contraseñas, códigos, cookies de sesión ni documentos de identidad.`
+      );
+      ask.disabled = false;
+      answer.replaceChildren(result?.answer
+        ? h("div", { class: "ai-msg" }, md(result.answer))
+        : h("p", { class: "err" }, result?.error ?? "No se recibió respuesta. Revisa la configuración de IA e inténtalo otra vez."));
+    } }, "Pedir plan de respuesta a la IA");
+    return h("details", { open: (d.types ?? []).length === 1 },
+      h("summary", {}, TYPE_LABEL[type] ?? type),
+      h("ul", {}, (d.guidance?.[type] ?? []).map((g) => h("li", {}, g))),
+      ask,
+      answer,
+    );
+  };
+
   const main = h("div", { class: "stack" },
     panel("Resumen", h("div", { class: "body" }, h("dl", { class: "facts" }, h("dt", {}, "Contacto"), h("dd", {}, `${d.contactName} · ${d.contactEmail}`),
       h("dt", {}, "Activos afectados"), h("dd", {}, d.affectedAssets.join(", ") || "sin especificar"), h("dt", {}, "Qué está pasando"), h("dd", {}, d.summary),
@@ -399,9 +421,9 @@ export async function incidentView(ctx, id) {
       h("button", { class: "btn primary", onclick: () => openFacebookRecoveryWizard((question) => askAi(question, null)) }, "Iniciar recuperación supervisada"),
       h("a", { class: "btn small", href: "https://www.facebook.com/hacked", target: "_blank", rel: "noopener noreferrer" }, "Recuperación oficial de Facebook"),
     )) : null,
-    (d.types ?? []).length ? panel("Opciones de bloqueo según el tipo marcado", h("div", { class: "body stack" },
-      h("p", { class: "muted" }, "Guía de contención por tipo de incidente. Como siempre: tú la ejecutas en tu propia infraestructura, nada se aplica desde aquí."),
-      ...(d.types ?? []).map((t) => h("details", { open: (d.types ?? []).length === 1 }, h("summary", {}, TYPE_LABEL[t] ?? t), h("ul", {}, (d.guidance?.[t] ?? []).map((g) => h("li", {}, g))))))) : null,
+    (d.types ?? []).length ? panel("Asistencia de IA por tipo de incidente", h("div", { class: "body stack" },
+      h("p", { class: "muted" }, "La IA ya puede analizar evidencia, proponer pasos y preparar planes para cada tipo marcado. Pídele un plan específico abajo. Cualquier acción que cambie una cuenta o sistema requiere aprobación humana y se aplica en el servicio correspondiente."),
+      ...(d.types ?? []).map(typeAiCard))) : null,
     panel(`Evidencia (${d.evidence.length})`, h("div", {}, evList), !closed ? h("button", { class: "btn small primary", onclick: addEvidence }, "Añadir evidencia") : null),
     evBox,
     suggestBox,
