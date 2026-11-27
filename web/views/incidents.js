@@ -133,25 +133,37 @@ function openFacebookRecoveryWizard(askAi) {
     const content = h("div", { class: "stack" });
     const render = () => {
       const step = facebookRecoverySteps[index];
-      const consent = h("input", { type: "checkbox", onchange: () => { nextButton.disabled = !consent.checked; } });
-      const nextButton = h("button", { type: "button", class: "btn primary", disabled: index === 0, onclick: () => { index++; render(); } }, "Siguiente");
+      let nextButton;
+      const feedback = h("div", { class: "stack" });
+      const consent = h("input", { type: "checkbox", onchange: () => { if (nextButton) nextButton.disabled = !consent.checked; } });
+      nextButton = h("button", { type: "button", class: "btn primary", disabled: index === 0, onclick: () => { index = Math.min(index + 1, facebookRecoverySteps.length - 1); render(); } }, "Siguiente");
+      const askButton = h("button", { type: "button", class: "btn small", onclick: async () => {
+        askButton.disabled = true;
+        feedback.replaceChildren(h("p", { class: "muted" }, "Consultando a la IA…"));
+        const result = await askAi(`Estamos en un incidente de recuperación de una cuenta de Facebook comprometida. El titular autorizó asistencia y está presente. Estamos en el paso «${step.title}». Explica la siguiente acción segura y práctica para este paso. No pidas ni proceses contraseñas, códigos, cookies, CAPTCHA ni documentos; si Facebook exige verificarlos, indica que el titular los introduzca directamente en Facebook. Distingue cuenta personal de activos empresariales cuando aplique.`);
+        askButton.disabled = false;
+        feedback.replaceChildren(result?.answer
+          ? h("div", { class: "ai-msg" }, md(result.answer))
+          : h("p", { class: "err" }, result?.error ?? "No se recibió respuesta. Revisa la configuración de IA del incidente e inténtalo otra vez."));
+      } }, "Consultar a la IA sobre este paso");
       const actions = [
-        h("button", { type: "button", class: "btn", disabled: index === 0, onclick: () => { index--; render(); } }, "Anterior"),
+        h("button", { type: "button", class: "btn", disabled: index === 0, onclick: () => { index = Math.max(index - 1, 0); render(); } }, "Anterior"),
         h("button", { type: "button", class: "btn", onclick: () => close(null) }, "Cerrar"),
         index < facebookRecoverySteps.length - 1
           ? nextButton
           : h("button", { type: "button", class: "btn primary", onclick: () => close(true) }, "Finalizar"),
       ];
-      content.replaceChildren(
+      content.replaceChildren(...[
         h("h2", {}, "Recuperación supervisada de Facebook"),
         h("p", { class: "muted" }, `Paso ${index + 1} de ${facebookRecoverySteps.length} · el titular conserva el control de su cuenta`),
         index === 0 ? h("label", { class: "check" }, consent, " Confirmo que el titular está presente y autorizó esta asistencia.") : null,
         h("h3", {}, step.title), h("p", {}, step.body),
         step.link ? h("a", { class: "btn small", href: step.link, target: "_blank", rel: "noopener noreferrer" }, step.linkLabel) : null,
-        h("button", { type: "button", class: "btn small", onclick: () => askAi(`Estamos en un incidente de recuperación de una cuenta de Facebook comprometida. El titular autorizó asistencia y está presente. Estamos en el paso «${step.title}». Explica la siguiente acción segura y práctica para este paso. No pidas ni proceses contraseñas, códigos, cookies, CAPTCHA ni documentos; si Facebook exige verificarlos, indica que el titular los introduzca directamente en Facebook. Distingue cuenta personal de activos empresariales cuando aplique.`) }, "Consultar a la IA sobre este paso"),
+        askButton,
+        feedback,
         h("p", { class: "muted" }, "La IA de esta plataforma no tiene una sesión ni permisos de Facebook y no puede completar verificaciones en nombre del titular. Puede coordinar el proceso y continuar después de cada paso."),
         h("div", { class: "actions" }, actions),
-      );
+      ].filter(Boolean));
     };
     render();
     return content;
@@ -327,7 +339,7 @@ export async function incidentView(ctx, id) {
   const aiHistory = h("div", { class: "ai-history" }, ...(d.aiMessages ?? []).map((m) => aiMsgCard(m.question, md(m.answer), `${m.actor} · ${fmtDate(m.createdAt)}`)));
   const aiStatus = h("div", {});
   const askAi = async (question, textarea) => {
-    if (!question.trim()) return;
+    if (!question.trim()) return { error: "Escribe una pregunta para la IA." };
     const stopThinking = startThinking(aiStatus);
     try {
       const r = await api("POST", `/api/incidents/${id}/ai-assist`, { question });
@@ -336,7 +348,8 @@ export async function incidentView(ctx, id) {
       aiHistory.scrollIntoView({ block: "end" });
       if (textarea) textarea.value = "";
       if (r.actions.length) reload();
-    } catch (e) { stopThinking(); aiStatus.replaceChildren(h("p", { class: "err" }, e.message)); }
+      return { answer: r.answer };
+    } catch (e) { stopThinking(); aiStatus.replaceChildren(h("p", { class: "err" }, e.message)); return { error: e.message }; }
   };
   const aiPanel = () => {
     if (!ctx.aiEnabled) return panel("Asistente de IA", h("div", { class: "body" }, h("p", { class: "muted" }, "El módulo de IA no está activado. Un autorizador puede activarlo en Configuración → Integración IA.")));
