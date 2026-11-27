@@ -14,6 +14,7 @@ const INCIDENT_TYPES = [
   ["data_breach", "Fuga / robo de datos"],
   ["unauthorized_access", "Acceso no autorizado"],
   ["whatsapp_account_takeover", "Robo de cuenta de WhatsApp"],
+  ["facebook_account_takeover", "Robo de cuenta de Facebook / Meta"],
   ["web_attack", "Ataque web (SQLi, XSS, defacement…)"],
   ["other", "Otro"],
 ];
@@ -83,6 +84,73 @@ function openWhatsappRecoveryWizard() {
             ? h("button", { type: "button", class: "btn primary", onclick: () => { index++; render(); } }, "Siguiente")
             : h("button", { type: "button", class: "btn primary", onclick: () => close(true) }, "Finalizar")
         )
+      );
+    };
+    render();
+    return content;
+  });
+}
+
+const facebookRecoverySteps = [
+  {
+    title: "Confirma la autorización y prepara una sesión segura",
+    body: "El titular debe estar presente y aceptar que lo acompañes. Trabajen en un dispositivo y una red que ya haya usado. La plataforma no debe recibir ni guardar contraseñas, códigos, cookies de sesión o documentos de identidad.",
+    link: null,
+  },
+  {
+    title: "Comprueba si conserva una sesión propia abierta",
+    body: "Si el titular todavía tiene acceso desde un dispositivo suyo, puede proteger la cuenta en los ajustes oficiales: cambiar la contraseña, revisar el correo y teléfono asociados, y cerrar las sesiones que no reconozca. El agente puede orientarlo mientras el titular opera la cuenta.",
+    link: "https://www.facebook.com/settings",
+    linkLabel: "Abrir ajustes oficiales",
+  },
+  {
+    title: "Inicia la recuperación oficial de la cuenta",
+    body: "Si no puede iniciar sesión, abre la recuperación oficial desde un dispositivo que haya usado antes. El titular debe introducir directamente cualquier contraseña, código, CAPTCHA o verificación de identidad que Facebook solicite.",
+    link: "https://www.facebook.com/hacked",
+    linkLabel: "Abrir recuperación oficial",
+  },
+  {
+    title: "Recupera los medios de contacto en paralelo",
+    body: "Si perdió acceso al correo o al número asociado, inicia la recuperación con el proveedor del correo o la compañía móvil. Si sospechan de duplicado de SIM, contacten al operador por su canal oficial. No cambien la titularidad de esos medios desde esta plataforma.",
+    link: null,
+  },
+  {
+    title: "Separa el caso personal del empresarial",
+    body: "Para una Página o activos de negocio, un administrador legítimo que aún tenga acceso puede revisar roles y accesos. Si hay anuncios, pagos o un portafolio comercial afectado, el titular o administrador puede abrir un caso en el soporte empresarial que tenga disponible.",
+    link: "https://www.facebook.com/business/help/support",
+    linkLabel: "Abrir ayuda para empresas",
+  },
+  {
+    title: "Asegura la cuenta y documenta el resultado",
+    body: "Cuando el titular recupere acceso, ayúdalo a quitar sesiones y datos de contacto desconocidos, activar autenticación en dos pasos, revisar administradores, anuncios, pagos y publicaciones, y guardar evidencia sin incluir secretos.",
+    link: null,
+  },
+];
+
+function openFacebookRecoveryWizard(askAi) {
+  return openDialog((close) => {
+    let index = 0;
+    const content = h("div", { class: "stack" });
+    const render = () => {
+      const step = facebookRecoverySteps[index];
+      const consent = h("input", { type: "checkbox", onchange: () => { nextButton.disabled = !consent.checked; } });
+      const nextButton = h("button", { type: "button", class: "btn primary", disabled: index === 0, onclick: () => { index++; render(); } }, "Siguiente");
+      const actions = [
+        h("button", { type: "button", class: "btn", disabled: index === 0, onclick: () => { index--; render(); } }, "Anterior"),
+        h("button", { type: "button", class: "btn", onclick: () => close(null) }, "Cerrar"),
+        index < facebookRecoverySteps.length - 1
+          ? nextButton
+          : h("button", { type: "button", class: "btn primary", onclick: () => close(true) }, "Finalizar"),
+      ];
+      content.replaceChildren(
+        h("h2", {}, "Recuperación supervisada de Facebook"),
+        h("p", { class: "muted" }, `Paso ${index + 1} de ${facebookRecoverySteps.length} · el titular conserva el control de su cuenta`),
+        index === 0 ? h("label", { class: "check" }, consent, " Confirmo que el titular está presente y autorizó esta asistencia.") : null,
+        h("h3", {}, step.title), h("p", {}, step.body),
+        step.link ? h("a", { class: "btn small", href: step.link, target: "_blank", rel: "noopener noreferrer" }, step.linkLabel) : null,
+        h("button", { type: "button", class: "btn small", onclick: () => askAi(`Estamos en un incidente de recuperación de una cuenta de Facebook comprometida. El titular autorizó asistencia y está presente. Estamos en el paso «${step.title}». Explica la siguiente acción segura y práctica para este paso. No pidas ni proceses contraseñas, códigos, cookies, CAPTCHA ni documentos; si Facebook exige verificarlos, indica que el titular los introduzca directamente en Facebook. Distingue cuenta personal de activos empresariales cuando aplique.`) }, "Consultar a la IA sobre este paso"),
+        h("p", { class: "muted" }, "La IA de esta plataforma no tiene una sesión ni permisos de Facebook y no puede completar verificaciones en nombre del titular. Puede coordinar el proceso y continuar después de cada paso."),
+        h("div", { class: "actions" }, actions),
       );
     };
     render();
@@ -313,6 +381,11 @@ export async function incidentView(ctx, id) {
         h("a", { class: "btn small", href: "https://faq.whatsapp.com/506595211487528/?locale=es_LA", target: "_blank", rel: "noopener noreferrer" }, "Ayuda oficial: registro y verificación"),
         h("a", { class: "btn small", href: "https://faq.whatsapp.com/1007324800132703/?locale=es_LA", target: "_blank", rel: "noopener noreferrer" }, "Ayuda oficial: recuperar tras pérdida o robo")
       ))) : null,
+    (d.types ?? []).includes("facebook_account_takeover") ? panel("Recuperación supervisada de Facebook", h("div", { class: "body stack" },
+      h("p", { class: "muted" }, "La IA puede orientar cada etapa desde el asistente del incidente y el especialista acompaña al titular. Facebook mantiene la verificación de identidad; el titular opera la cuenta y escribe directamente cualquier contraseña, código o documento en sus canales oficiales."),
+      h("button", { class: "btn primary", onclick: () => openFacebookRecoveryWizard((question) => askAi(question, null)) }, "Iniciar recuperación supervisada"),
+      h("a", { class: "btn small", href: "https://www.facebook.com/hacked", target: "_blank", rel: "noopener noreferrer" }, "Recuperación oficial de Facebook"),
+    )) : null,
     (d.types ?? []).length ? panel("Opciones de bloqueo según el tipo marcado", h("div", { class: "body stack" },
       h("p", { class: "muted" }, "Guía de contención por tipo de incidente. Como siempre: tú la ejecutas en tu propia infraestructura, nada se aplica desde aquí."),
       ...(d.types ?? []).map((t) => h("details", { open: (d.types ?? []).length === 1 }, h("summary", {}, TYPE_LABEL[t] ?? t), h("ul", {}, (d.guidance?.[t] ?? []).map((g) => h("li", {}, g))))))) : null,
@@ -329,3 +402,4 @@ export async function incidentView(ctx, id) {
     h("div", { class: "page-head" }, h("div", {}, h("h1", {}, d.organization), h("p", { class: "row" }, seal(STATUS[d.status] ?? d.status, STATUS_TONE[d.status]), h("span", { class: "muted" }, `Abierto ${fmtDate(d.createdAt)} por ${d.createdBy}`)))),
     !closed ? h("div", { class: "detail-layout" }, main, h("div", { class: "ai-side" }, aiPanel())) : main) };
 }
+
