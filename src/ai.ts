@@ -212,7 +212,7 @@ async function runGeminiLoop(opts: RunOpts): Promise<AiResult> {
 const INCIDENT_TOOLS: ToolDef[] = [
   {
     name: "incident_evidence_analyze",
-    description: "Analiza texto de evidencia (log o cabeceras de correo) que el humano incluyó en su mensaje y lo guarda como evidencia del caso. Solo lee el texto dado; no se conecta a ninguna red.",
+    description: "Analiza texto de evidencia (log o cabeceras de correo) que el humano incluyó en su mensaje y lo guarda como evidencia del caso. Solo está disponible si el autorizador activó la delegación puntual para esta consulta. Solo lee el texto dado; no se conecta a ninguna red.",
     input_schema: { type: "object", properties: {
       kind: { type: "string", enum: ["log", "email_headers", "other"] },
       description: { type: "string", maxLength: 300 },
@@ -221,14 +221,14 @@ const INCIDENT_TOOLS: ToolDef[] = [
   },
   {
     name: "incident_types_set",
-    description: "Marca (o reemplaza) los tipos de incidente del caso. SOLO se debe llamar después de que el humano haya confirmado explícitamente en el chat cuáles tipos quiere marcar — nunca a partir de una sugerencia sin que el humano la haya aprobado.",
+    description: "Marca o reemplaza los tipos del caso. Solo está disponible si el autorizador activó la delegación puntual para esta consulta. Con esa autorización, marca únicamente tipos respaldados con claridad por la evidencia; sin ella, no está disponible.",
     input_schema: { type: "object", properties: {
       types: { type: "array", items: { type: "string", enum: ["phishing_email", "network_intrusion", "malware_ransomware", "ddos", "data_breach", "unauthorized_access", "web_attack", "other"] } },
     }, required: ["types"] },
   },
   {
     name: "incident_targets_set",
-    description: "Marca (o reemplaza) qué herramientas de bloqueo (firewall/iptables-ufw, nginx, Cloudflare) tiene disponibles el equipo para este caso. SOLO se debe llamar después de que el humano lo confirme explícitamente en el chat.",
+    description: "Marca o reemplaza qué herramientas de bloqueo (firewall/iptables-ufw, nginx, Cloudflare) tiene disponibles el equipo. Solo está disponible con delegación puntual, y aun así nunca supongas disponibilidad: el humano debe haber indicado qué herramientas posee.",
     input_schema: { type: "object", properties: {
       targets: { type: "array", items: { type: "string", enum: ["firewall", "nginx", "cloudflare"] } },
     }, required: ["targets"] },
@@ -279,6 +279,8 @@ export async function runIncidentAssistant(opts: {
 
   const execTool = async (name: string, input: Record<string, unknown>): Promise<unknown> => {
     const actor = aiActor(requestedBy);
+    if (!authorizeActions && ["incident_evidence_analyze", "incident_types_set", "incident_targets_set"].includes(name))
+      return { error: "HUMAN_AUTHORIZATION_REQUIRED", message: "El autorizador debe activar la delegación puntual de acciones para esta consulta." };
     if (name === "incident_evidence_analyze") {
       const content = String(input.content ?? "").slice(0, MAX_EVIDENCE_CHARS);
       const kind = (["log", "email_headers", "other"].includes(String(input.kind)) ? input.kind : "other") as "log" | "email_headers" | "other";
