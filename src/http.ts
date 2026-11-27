@@ -16,6 +16,7 @@ import { Auth } from "./web/auth.js";
 import { OAuth, OAuthError } from "./oauth.js";
 import { createApi } from "./web/api.js";
 import { securityHeaders, serveStatic } from "./web/static.js";
+import { SecurityEventIn } from "./schemas.js";
 
 const HTTP_ROLES = ["agent", "analyst", "auditor"] as const;
 type HttpRole = (typeof HTTP_ROLES)[number];
@@ -75,6 +76,25 @@ export function createHttpApp(o: HttpOptions): http.Server {
         } catch (e) { if (e instanceof OAuthError) return send(res, e.status, { error: e.code, error_description: e.message }); throw e; }
       }
       if (path === "/") { res.writeHead(302, { Location: "/app/" }); return void res.end(); }
+      const hook = /^\/hooks\/security\/([0-9a-fA-F-]{36})$/.exec(path);
+      if (hook) {
+        if (req.method !== "POST") return send(res, 405, { error: "METHOD_NOT_ALLOWED" });
+        if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) return send(res, 415, { error: "CONTENT_TYPE" });
+        const chunks: Buffer[] = []; let size = 0;
+        for await (const c of req) { size += (c as Buffer).length; if (size > 65_536) return send(res, 413, { error: "BODY_TOO_LARGE" }); chunks.push(c as Buffer); }
+        const raw = Buffer.concat(chunks).toString("utf8");
+        let parsed: unknown;
+        try { parsed = JSON.parse(raw); } catch { return send(res, 400, { error: "INVALID_JSON" }); }
+        const checked = SecurityEventIn.safeParse(parsed);
+        if (!checked.success) return send(res, 400, { error: "INVALID_EVENT", fields: checked.error.issues.slice(0, 10).map(i => ({ field: i.path.join("."), message: i.message })) });
+        const timestamp = String(req.headers["x-esc-timestamp"] ?? "");
+        const signature = String(req.headers["x-esc-signature"] ?? "");
+        const result = await o.store.ingestSecurityEvent(hook[1], timestamp, signature, raw, checked.data);
+        if (result.status === "invalid_signature") return send(res, 401, { error: "INVALID_SIGNATURE" });
+        if (result.status === "invalid_timestamp") return send(res, 401, { error: "STALE_TIMESTAMP" });
+        if (result.status === "unavailable") return send(res, 404, { error: "INTEGRATION_UNAVAILABLE" });
+        return send(res, result.status === "duplicate" ? 200 : 202, { status: result.status, eventId: result.status === "accepted" ? result.eventId : undefined });
+      }
       if (path.startsWith("/api/")) return await api(req, res, path, new URLSearchParams(qs));
       if (await serveStatic(req, res, path)) return;
       if (path === "/readyz") return (await o.store.ping()) ? send(res, 200, { status: "ready" }) : send(res, 503, { status: "db_unavailable" }); // sin detalles del error

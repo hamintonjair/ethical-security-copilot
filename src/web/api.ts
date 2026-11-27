@@ -13,7 +13,7 @@ import { PolicyEngine } from "../policy.js";
 import { Gateway } from "../gateway.js";
 import { runScanInitiate, runScanStop } from "../scan.js";
 import { OAuth, OAuthError } from "../oauth.js";
-import { IncidentCreateIn, IncidentEvidenceIn, IncidentContainIn, IncidentTypesIn, IncidentTargetsIn, AiConfigIn, AiModelsIn, AiAssistIn, AiConfigTestIn, SupplyChainAnalyzeIn, AlertsConfigIn } from "../schemas.js";
+import { IncidentCreateIn, IncidentEvidenceIn, IncidentContainIn, IncidentTypesIn, IncidentTargetsIn, AiConfigIn, AiModelsIn, AiAssistIn, AiConfigTestIn, SupplyChainAnalyzeIn, AlertsConfigIn, SecurityIntegrationCreateIn } from "../schemas.js";
 import { analyzeLog, analyzeEmailHeaders, containmentRules, buildIncidentReport, suggestIncidentTypes, TYPE_GUIDANCE, MAX_EVIDENCE_CHARS } from "../incident.js";
 import { parseManifest, checkVulnerabilities } from "../supplychain.js";
 import { runIncidentAssistant, runAssessmentAssistant, runIncidentDraftAssistant, runAssessmentDraftAssistant, aiActor, testApiKey, listModels, type Provider } from "../ai.js";
@@ -43,6 +43,7 @@ const CAN = {
   incidentWork: ["authorizer", "operator", "analyst"] as WebRole[],
   aiConfig: ["authorizer"] as WebRole[],
   alertsConfig: ["authorizer"] as WebRole[],
+  integrationsConfig: ["authorizer"] as WebRole[],
   scanExec: HUMAN_OPS,
   scanStop: HUMAN_OPS,
 };
@@ -449,6 +450,26 @@ export function createApi(ctx: ApiCtx) {
     const cfg = await store.getAlertsConfig();
     if (!cfg.enabled || !cfg.webhookUrl) throw new HttpError(400, "ALERTS_NOT_CONFIGURED", "Activa las alertas y guarda una URL de webhook antes de probar.");
     await sendAlertIfDue(store, { kind: "test", title: "Alerta de prueba desde Ethical Security Copilot" });
+    return { ok: true };
+  });
+
+  /* ---------- Integraciones entrantes ---------- */
+  route("GET", "/api/integrations", CAN.integrationsConfig, async () => ({ integrations: await store.listSecurityIntegrations(), events: await store.listSecurityEvents(100) }));
+  route("POST", "/api/integrations", CAN.integrationsConfig, async ({ s, body, req }) => {
+    const input = SecurityIntegrationCreateIn.parse(body);
+    const created = await store.createSecurityIntegration(input, s.user.username);
+    const host = String(req.headers.host ?? "");
+    const protocol = req.headers["x-forwarded-proto"] === "https" || (req.socket as any).encrypted ? "https" : "http";
+    return { ...created, endpoint: `${protocol}://${host}/hooks/security/${created.id}` };
+  });
+  route("POST", "/api/integrations/:id/rotate", CAN.integrationsConfig, async ({ s, params }) => {
+    const secret = await store.rotateSecurityIntegrationSecret(params[0], s.user.username);
+    if (!secret) throw new HttpError(404, "NOT_FOUND", "La integración no existe o está desactivada.");
+    return { secret };
+  });
+  route("POST", "/api/integrations/:id/enabled", CAN.integrationsConfig, async ({ s, params, body }) => {
+    if (typeof body.enabled !== "boolean") throw new HttpError(400, "VALIDATION", "Indica si la integración debe quedar activa.");
+    if (!await store.setSecurityIntegrationEnabled(params[0], body.enabled, s.user.username)) throw new HttpError(404, "NOT_FOUND", "La integración no existe.");
     return { ok: true };
   });
 

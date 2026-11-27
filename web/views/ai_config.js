@@ -62,9 +62,60 @@ function alertsPanel(ctx, acfg) {
     testOut));
 }
 
+function integrationsPanel(initial) {
+  let state = initial;
+  const message = h("div", {});
+  const name = h("input", { type: "text", maxlength: "100", placeholder: "Ej.: Wazuh del servidor principal", autocomplete: "off" });
+  const provider = h("select", {}, [
+    ["generic", "Webhook compatible (genérico)"], ["google_workspace", "Google Workspace (requiere adaptador)"],
+    ["microsoft", "Microsoft (requiere adaptador)"], ["wazuh", "Wazuh (requiere adaptador)"],
+    ["cloudflare", "Cloudflare (requiere adaptador)"], ["other", "Otro proveedor"],
+  ].map(([v, label]) => h("option", { value: v }, label)));
+  const list = h("div", { class: "stack" });
+  const events = h("div", { class: "stack" });
+  const reveal = (endpoint, secret) => {
+    const key = h("code", {}, secret);
+    const box = panel("Guarda la clave ahora", h("div", { class: "body stack" },
+      h("p", { class: "warn" }, "La clave se muestra una sola vez. Guárdala en el gestor de secretos del servicio que enviará las alertas. Si la pierdes, tendrás que rotarla."),
+      h("p", {}, "Endpoint: ", h("code", {}, endpoint)), h("p", {}, "Clave HMAC: ", key),
+      h("p", { class: "muted" }, "Cada petición debe incluir X-ESC-Timestamp (segundos Unix) y X-ESC-Signature: sha256=<HMAC-SHA256 de timestamp + punto + cuerpo JSON exacto>. El evento debe seguir el esquema mostrado en el ejemplo.")));
+    message.replaceChildren(box);
+    box.scrollIntoView?.({ behavior: "smooth", block: "center" });
+  };
+  const render = () => {
+    list.replaceChildren(...(state.integrations.length ? state.integrations.map((it) => panel(it.name,
+      h("div", { class: "body stack" },
+        h("p", {}, `${it.provider} · ${it.enabled ? "Activa" : "Desactivada"} · clave termina en …${it.secretLast4}`),
+        h("p", { class: "muted" }, `Endpoint: ${location.origin}/hooks/security/${it.id}`),
+        h("div", { class: "row" },
+          h("button", { class: "btn small", onclick: async () => {
+            try { const r = await api("POST", `/api/integrations/${it.id}/rotate`, {}); reveal(`${location.origin}/hooks/security/${it.id}`, r.secret); await reload(); }
+            catch (e) { toast(e.message, true); }
+          } }, "Rotar clave"),
+          h("button", { class: "btn small", onclick: async () => {
+            try { await api("POST", `/api/integrations/${it.id}/enabled`, { enabled: !it.enabled }); await reload(); }
+            catch (e) { toast(e.message, true); }
+          } }, it.enabled ? "Desactivar" : "Activar"))))) : [h("p", { class: "muted" }, "Aún no hay fuentes conectadas.")]));
+    events.replaceChildren(...(state.events.length ? state.events.slice(0, 25).map((ev) => panel(ev.title,
+      h("div", { class: "body stack" }, h("p", {}, `${ev.severity.toUpperCase()} · ${ev.category} · ${ev.integrationName}${ev.asset ? ` · ${ev.asset}` : ""}`), h("p", {}, ev.summary), h("p", { class: "muted" }, `Observado: ${fmtDate(ev.observedAt)} · Recibido: ${fmtDate(ev.receivedAt)}`)))) : [h("p", { class: "muted" }, "Todavía no se han recibido eventos.")]));
+  };
+  const reload = async () => { state = await api("GET", "/api/integrations"); render(); };
+  const create = async () => {
+    try { const r = await api("POST", "/api/integrations", { name: name.value.trim(), provider: provider.value }); name.value = ""; await reload(); reveal(r.endpoint, r.secret); toast("Fuente creada."); }
+    catch (e) { toast(e.issues?.map(i => i.message).join(" ") || e.message, true); }
+  };
+  render();
+  const example = `{"eventId":"alert-123","observedAt":"2026-11-27T14:30:00Z","severity":"high","category":"suspicious_login","title":"Inicio de sesión sospechoso","asset":"usuario@empresa.com","summary":"Inicio desde ubicación inusual","data":{"source":"proveedor"}}`;
+  return panel("Fuentes de seguridad", h("div", { class: "body stack" },
+    h("p", { class: "muted" }, "Entrada segura para alertas de EDR, correo, identidad, firewall, nube y bases de datos. Esta base recibe eventos normalizados y los registra; los conectores nativos de cada proveedor se incorporan por separado."),
+    h("div", { class: "row" }, name, provider, h("button", { class: "btn primary", onclick: create }, "Añadir fuente")),
+    h("details", {}, h("summary", {}, "Formato de evento esperado"), h("p", {}, "La petición debe ser POST application/json y estar firmada con HMAC-SHA256. El identificador del evento debe ser único por fuente para evitar duplicados."), h("pre", {}, example)),
+    message, list, h("h3", {}, "Eventos recibidos"), events));
+}
+
 export async function aiConfigView(ctx) {
-  let cfg, acfg;
-  try { [cfg, acfg] = await Promise.all([api("GET", "/api/ai/config"), api("GET", "/api/alerts/config")]); } catch (e) { return { crumb: "Configuración", node: errorBox(e) }; }
+  let cfg, acfg, integrations;
+  try { [cfg, acfg, integrations] = await Promise.all([api("GET", "/api/ai/config"), api("GET", "/api/alerts/config"), api("GET", "/api/integrations")]); } catch (e) { return { crumb: "Configuración", node: errorBox(e) }; }
 
   const enabled = h("input", { type: "checkbox", checked: cfg.enabled });
   const provider = h("select", {}, PROVIDERS.map(([v, l]) => h("option", { value: v, selected: v === cfg.provider }, l)));
@@ -161,5 +212,5 @@ export async function aiConfigView(ctx) {
       status, err,
       h("div", { class: "row" }, h("button", { class: "btn primary", onclick: save }, "Guardar"), h("button", { class: "btn", type: "button", onclick: test }, "Probar conexión")),
       testOut)),
-    alertsPanel(ctx, acfg)) };
+    alertsPanel(ctx, acfg), integrationsPanel(integrations)) };
 }

@@ -225,6 +225,22 @@ export const AlertsConfigIn = z.object({
   clearSecret: z.boolean().optional(), // true => quita el secreto de firma (deja de firmar el webhook)
 }).refine(v => !v.enabled || !!v.webhookUrl, { message: "Hace falta la URL del webhook para activar las alertas.", path: ["webhookUrl"] });
 
+/* ---------- Fuentes de eventos de seguridad ---------- */
+export const SecurityIntegrationCreateIn = z.object({
+  name: z.string().trim().min(2).max(100),
+  provider: z.enum(["generic", "google_workspace", "microsoft", "wazuh", "cloudflare", "other"]),
+});
+export const SecurityEventIn = z.object({
+  eventId: z.string().trim().min(1).max(200),
+  observedAt: z.string().datetime({ offset: true }),
+  severity: AlertSeverity,
+  category: z.string().trim().min(1).max(100),
+  title: z.string().trim().min(3).max(300),
+  asset: z.string().trim().max(300).optional(),
+  summary: z.string().trim().min(1).max(4000),
+  data: z.record(z.string().max(100), z.union([z.string().max(2000), z.number(), z.boolean(), z.null()])).refine(v => Object.keys(v).length <= 30, "data admite como máximo 30 campos").optional(),
+});
+
 /* ---------- Auditoría (hash chain) ---------- */
 export const AuditEntry = z.object({
   seq: z.number().int(),

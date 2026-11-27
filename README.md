@@ -134,3 +134,11 @@ IA. Hay un botón "Enviar alerta de prueba" para comprobar la entrega sin espera
 real. Un fallo o una caída del webhook nunca rompe el flujo principal — solo queda auditado
 (`alert:sent` / `alert:failed`).
 
+## Fuentes entrantes de eventos (base para detección continua)
+
+En *Configuración → Fuentes de seguridad*, un authorizer puede registrar un endpoint receptor para que una integración propia o un adaptador envíe alertas ya normalizadas. Cada fuente tiene una clave aleatoria distinta, cifrada en la base de datos y mostrada solo al crearla o rotarla. Las peticiones `POST /hooks/security/:id` deben enviar `X-ESC-Timestamp` (Unix en segundos) y `X-ESC-Signature: sha256=<hex>`, calculada como HMAC-SHA256 sobre `timestamp + "." + cuerpo JSON exacto`. Se aceptan marcas de tiempo con una diferencia máxima de cinco minutos; el tamaño máximo es 64 KiB; los eventos repetidos por `eventId` se descartan de forma idempotente. Cada evento se valida, se almacena y queda en la cadena de auditoría. Esta entrada **registra alertas; no bloquea sistemas ni crea incidentes automáticamente**.
+
+Esquema mínimo: `eventId`, `observedAt` (ISO 8601), `severity` (`info|low|medium|high|critical`), `category`, `title` y `summary`; `asset` y `data` son opcionales. La consola muestra los eventos recibidos.
+
+Esta primera pieza es un receptor genérico, no conectores nativos de Google, Microsoft, Wazuh o Cloudflare. El campo de proveedor clasifica la fuente; un adaptador específico sigue siendo necesario para consultar la API de cada proveedor, gestionar OAuth/permisos y transformar sus alertas a este formato. Gmail personal no equivale a Workspace ni proporciona por sí solo un flujo de auditoría empresarial. La integración nativa de Google Workspace deberá requerir una cuenta administradora y permisos de auditoría; la cuenta Gmail personal tendrá un alcance diferente y no debe recibir permisos amplios de lectura del correo.
+

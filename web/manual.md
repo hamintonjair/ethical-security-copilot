@@ -178,6 +178,16 @@ Estrictamente informativo: avisa a un endpoint propio cuando pase algo que merec
 - **Si el webhook falla o no responde**: nunca rompe el flujo principal (el hallazgo o el incidente
   se crean igual); solo queda registrado en la auditoría (`alert:sent` o `alert:failed`).
 
+## 8quater. Fuentes entrantes de eventos de seguridad
+
+Esta es la base para que la consola reciba alertas generadas por EDR, identidad/correo, red, nube o bases de datos. En *Configuración → Fuentes de seguridad*, un authorizer crea una fuente y guarda la clave secreta que aparece una sola vez. Si se pierde, se rota desde la misma vista.
+
+- **Endpoint**: `POST https://<host>/hooks/security/<id-de-fuente>` con `Content-Type: application/json`.
+- **Firma**: `X-ESC-Timestamp` es la hora Unix en segundos. `X-ESC-Signature` lleva `sha256=<hex>` de HMAC-SHA256 con la clave de la fuente y el mensaje `timestamp + "." + cuerpo JSON exacto`. Solo se aceptan firmas con una diferencia horaria de hasta cinco minutos.
+- **Evento requerido**: `eventId`, `observedAt` (fecha ISO 8601 con zona horaria), `severity`, `category`, `title` y `summary`. `asset` y `data` son opcionales. El cuerpo no puede superar 64 KiB; `eventId` evita guardar dos veces el mismo evento de una fuente.
+- **Efecto**: la plataforma valida, guarda y audita el evento y lo muestra en esta vista. No aplica bloqueos ni abre incidentes automáticamente.
+- **Límite actual**: el receptor acepta el formato común; no consulta aún las APIs nativas de Google, Microsoft, Wazuh ni Cloudflare. Hace falta un adaptador por proveedor. La etiqueta Google Workspace no conecta automáticamente una cuenta. Gmail personal no proporciona los registros administrativos de Workspace; la integración empresarial requerirá autorización de un administrador y permisos concretos.
+
 ## 9. Mapa de cobertura: del ataque a la defensa
 
 La herramienta **no ataca**: encuentra las condiciones que los atacantes aprovechan y te dice cómo cerrarlas.

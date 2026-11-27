@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { AssessmentInput, Assessment, type Role } from "./schemas.js";
 import { canonical, sha256, sign, verifySignature, newToken, encryptSecret, decryptSecret } from "./crypto.js";
@@ -231,6 +231,68 @@ export class Store {
         [input.enabled, webhookUrl, input.minSeverity, input.notifyIncidentOpen, actor]);
     }
     await this.audit({ actor, role: "authorizer", action: "alerts:config_updated", payload: { enabled: input.enabled, minSeverity: input.minSeverity, notifyIncidentOpen: input.notifyIncidentOpen, secretChanged: !!input.secret, secretCleared: !!input.clearSecret } });
+  }
+
+  /* ---------- Integraciones entrantes (telemetría defensiva) ---------- */
+  private integrationsEncKey() { return createHash("sha256").update(Buffer.concat([this.signingKey, Buffer.from("security-integrations-enc-v1")])).digest(); }
+
+  async createSecurityIntegration(input: { name: string; provider: string }, actor: string) {
+    const id = randomUUID();
+    const secret = newToken();
+    const enc = encryptSecret(secret, this.integrationsEncKey());
+    const row = (await this.db.query("insert into public.security_integrations (id,name,provider,secret_enc,secret_last4,created_by) values ($1,$2,$3,$4,$5,$6) returning id,name,provider,enabled,created_at", [id, input.name, input.provider, enc, secret.slice(-4), actor]))[0];
+    await this.audit({ actor, role: "authorizer", action: "integration:created", payload: { integrationId: id, name: input.name, provider: input.provider } });
+    return { id: row.id, name: row.name, provider: row.provider, enabled: row.enabled, createdAt: iso(row.created_at), secret };
+  }
+
+  async listSecurityIntegrations() {
+    return (await this.db.query("select id,name,provider,enabled,secret_last4,created_by,created_at,updated_at from public.security_integrations order by created_at desc")).map(r => ({ id: r.id, name: r.name, provider: r.provider, enabled: r.enabled, secretLast4: r.secret_last4, createdBy: r.created_by, createdAt: iso(r.created_at), updatedAt: iso(r.updated_at) }));
+  }
+
+  async rotateSecurityIntegrationSecret(id: string, actor: string) {
+    const secret = newToken();
+    const enc = encryptSecret(secret, this.integrationsEncKey());
+    const rows = await this.db.query("update public.security_integrations set secret_enc=$2,secret_last4=$3,updated_at=now() where id=$1 and enabled returning id", [id, enc, secret.slice(-4)]);
+    if (!rows.length) return null;
+    await this.audit({ actor, role: "authorizer", action: "integration:secret_rotated", payload: { integrationId: id } });
+    return secret;
+  }
+
+  async setSecurityIntegrationEnabled(id: string, enabled: boolean, actor: string) {
+    const rows = await this.db.query("update public.security_integrations set enabled=$2,updated_at=now() where id=$1 returning id", [id, enabled]);
+    if (!rows.length) return false;
+    await this.audit({ actor, role: "authorizer", action: enabled ? "integration:enabled" : "integration:disabled", payload: { integrationId: id } });
+    return true;
+  }
+
+  /** Verifica firma HMAC antes de validar y almacenar el evento. Rechaza timestamps fuera de ±5 min. */
+  async ingestSecurityEvent(id: string, timestamp: string, signature: string, rawBody: string, event: {
+    eventId: string; observedAt: string; severity: string; category: string; title: string;
+    asset?: string; summary: string; data?: unknown;
+  }) {
+    const source = (await this.db.query("select provider,secret_enc from public.security_integrations where id=$1 and enabled=true", [id]))[0];
+    if (!source) return { status: "unavailable" as const };
+    const ts = Number(timestamp);
+    if (!Number.isFinite(ts) || Math.abs(Date.now() - ts * 1000) > 5 * 60_000) return { status: "invalid_timestamp" as const };
+    let secret: string;
+    try { secret = decryptSecret(source.secret_enc, this.integrationsEncKey()); } catch { return { status: "unavailable" as const }; }
+    const expected = createHmac("sha256", secret).update(`${timestamp}.${rawBody}`).digest();
+    const supplied = Buffer.from(signature.replace(/^sha256=/, ""), "hex");
+    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return { status: "invalid_signature" as const };
+    const safeData = Object.fromEntries(Object.entries((event.data ?? {}) as Record<string, string | number | boolean | null>).map(([k, v]) => [k, /secret|token|password|authorization|cookie|credential|api.?key/i.test(k) ? "[REDACTED]" : typeof v === "string" ? redact(v, 1000) : v]));
+    const safeEventId = sha256(event.eventId);
+    const safeCategory = redact(event.category, 100);
+    const safeTitle = redact(event.title, 300);
+    const safeAsset = event.asset ? redact(event.asset, 300) : undefined;
+    const safeSummary = redact(event.summary, 4000);
+    const inserted = await this.db.query("insert into public.security_events (integration_id,external_event_id,observed_at,severity,category,title,asset,summary,event_data) values ($1,$2,$3,$4,$5,$6,$7,$8,$9) on conflict (integration_id,external_event_id) do nothing returning id", [id, safeEventId, event.observedAt, event.severity, safeCategory, safeTitle, safeAsset ?? null, safeSummary, JSON.stringify(safeData)]);
+    if (!inserted.length) return { status: "duplicate" as const };
+    await this.audit({ actor: `integration:${id}`, role: "agent", action: "security:event_received", payload: { integrationId: id, provider: source.provider, eventId: safeEventId, severity: event.severity, category: safeCategory, title: safeTitle, asset: safeAsset } });
+    return { status: "accepted" as const, eventId: inserted[0].id };
+  }
+
+  async listSecurityEvents(limit = 100) {
+    return (await this.db.query("select e.id,e.external_event_id,e.observed_at,e.severity,e.category,e.title,e.asset,e.summary,e.received_at,i.name integration_name,i.provider from public.security_events e join public.security_integrations i on i.id=e.integration_id order by e.received_at desc limit $1", [limit])).map(r => ({ id: r.id, externalEventId: r.external_event_id, observedAt: iso(r.observed_at), severity: r.severity, category: r.category, title: r.title, asset: r.asset, summary: r.summary, receivedAt: iso(r.received_at), integrationName: r.integration_name, provider: r.provider }));
   }
 
   /** Cambia de estado solo por transiciones válidas; atómico (compara el estado previo). */
