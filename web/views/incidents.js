@@ -13,6 +13,7 @@ const INCIDENT_TYPES = [
   ["ddos", "Denegación de servicio (DDoS)"],
   ["data_breach", "Fuga / robo de datos"],
   ["unauthorized_access", "Acceso no autorizado"],
+  ["whatsapp_account_takeover", "Robo de cuenta de WhatsApp"],
   ["web_attack", "Ataque web (SQLi, XSS, defacement…)"],
   ["other", "Otro"],
 ];
@@ -41,6 +42,53 @@ const pickFrom = (options, title, intro, selected = []) => openDialog((close) =>
 });
 const pickTypes = (title, intro, selected = []) => pickFrom(INCIDENT_TYPES, title, intro, selected);
 const pickTargets = (title, intro, selected = []) => pickFrom(CONTAINMENT_TOOLS, title, intro, selected);
+const whatsappRecoverySteps = [
+  {
+    title: "Contén el engaño y protege a tus contactos",
+    body: "Desde otro canal, avisa a tus contactos que no envíen dinero ni compartan códigos por mensajes de tu cuenta. Conserva capturas y horas como evidencia. Si también perdiste el teléfono o la SIM, llama a tu operador para bloquear la SIM.",
+  },
+  {
+    title: "Recupera el control de tu número",
+    body: "Si ya no controlas la línea, solicita a tu operador una SIM de reemplazo con el mismo número. WhatsApp necesita que tengas acceso al número asociado.",
+  },
+  {
+    title: "Vuelve a registrar tu número en WhatsApp",
+    body: "Abre la aplicación oficial de WhatsApp en tu teléfono, escribe tu número en formato internacional y solicita el código por SMS o llamada. Introduce ese código únicamente dentro de WhatsApp. Cuando el registro se complete, WhatsApp cerrará la sesión de los otros dispositivos.",
+  },
+  {
+    title: "Resuelve la verificación en dos pasos",
+    body: "Si WhatsApp solicita un PIN que no reconoces, no lo adivines ni lo compartas. Usa el correo de recuperación si está disponible o sigue las opciones y tiempos que indique el proceso oficial de WhatsApp.",
+  },
+  {
+    title: "Asegura la cuenta recuperada",
+    body: "En WhatsApp, revisa Dispositivos vinculados y cierra cualquier sesión que no reconozcas. Activa la verificación en dos pasos con un correo de recuperación. Revisa si el atacante pidió dinero o envió mensajes y conserva esa evidencia en el incidente.",
+  },
+];
+function openWhatsappRecoveryWizard() {
+  return openDialog((close) => {
+    let index = 0;
+    const content = h("div", { class: "stack" });
+    const render = () => {
+      const step = whatsappRecoverySteps[index];
+      content.replaceChildren(
+        h("h2", {}, "Asistente de recuperación de WhatsApp"),
+        h("p", { class: "muted" }, `Paso ${index + 1} de ${whatsappRecoverySteps.length}`),
+        h("h3", {}, step.title),
+        h("p", {}, step.body),
+        h("p", { class: "muted" }, "Como especialista, puedes acompañar al titular paso a paso. El titular debe escribir los códigos y PIN directamente en WhatsApp; no te los debe dictar ni enviar, y no se guardan en este caso."),
+        h("div", { class: "actions" },
+          h("button", { type: "button", class: "btn", disabled: index === 0, onclick: () => { index--; render(); } }, "Anterior"),
+          h("button", { type: "button", class: "btn", onclick: () => close(null) }, "Cerrar"),
+          index < whatsappRecoverySteps.length - 1
+            ? h("button", { type: "button", class: "btn primary", onclick: () => { index++; render(); } }, "Siguiente")
+            : h("button", { type: "button", class: "btn primary", onclick: () => close(true) }, "Finalizar")
+        )
+      );
+    };
+    render();
+    return content;
+  });
+}
 
 /** Chat para abrir un caso conversando. La IA solo arma un borrador (incident_draft); el caso lo abre
  * el humano con un clic, que llama a la misma ruta de siempre. Al confirmar, esta conversación pasa
@@ -252,6 +300,19 @@ export async function incidentView(ctx, id) {
         h("button", { class: "btn small", onclick: editTargets }, "Marcar / editar herramientas de bloqueo"),
         d.status === "open" ? h("button", { class: "btn", onclick: () => setStatus("contained") }, "Marcar como contenido") : null,
         h("button", { class: "btn danger", onclick: () => setStatus("closed") }, "Cerrar incidente")) : null)),
+    (d.types ?? []).includes("whatsapp_account_takeover") ? panel("Recuperación de cuenta de WhatsApp", h("div", { class: "body stack" },
+      h("p", { class: "muted" }, "Este asistente ayuda al especialista a acompañar al titular. El titular conserva el control del teléfono e introduce en WhatsApp sus propios códigos y PIN; la consola nunca los solicita ni los guarda."),
+      h("button", { class: "btn primary", onclick: openWhatsappRecoveryWizard }, "Iniciar recuperación asistida"),
+      h("ol", {},
+        h("li", {}, "Acompaña al titular mientras vuelve a registrar su número en la aplicación oficial de WhatsApp y solicita el código por SMS o llamada. El titular debe escribir el código directamente en WhatsApp; nunca te lo debe dictar ni enviar, y no debe pegarse en este caso."),
+        h("li", {}, "Si alguien activó un PIN de verificación en dos pasos que la persona no conoce, no lo adivines. Usa las opciones de recuperación que muestre WhatsApp y sigue sus tiempos de espera."),
+        h("li", {}, "Si la persona perdió el acceso a su SIM o número, contacta al operador móvil para bloquear la SIM y solicitar otra con el mismo número."),
+        h("li", {}, "Al recuperar la cuenta, revisa Dispositivos vinculados y cierra los que no reconozcas; activa la verificación en dos pasos con correo de recuperación y avisa a tus contactos por otro canal.")
+      ),
+      h("div", { class: "row" },
+        h("a", { class: "btn small", href: "https://faq.whatsapp.com/506595211487528/?locale=es_LA", target: "_blank", rel: "noopener noreferrer" }, "Ayuda oficial: registro y verificación"),
+        h("a", { class: "btn small", href: "https://faq.whatsapp.com/1007324800132703/?locale=es_LA", target: "_blank", rel: "noopener noreferrer" }, "Ayuda oficial: recuperar tras pérdida o robo")
+      ))) : null,
     (d.types ?? []).length ? panel("Opciones de bloqueo según el tipo marcado", h("div", { class: "body stack" },
       h("p", { class: "muted" }, "Guía de contención por tipo de incidente. Como siempre: tú la ejecutas en tu propia infraestructura, nada se aplica desde aquí."),
       ...(d.types ?? []).map((t) => h("details", { open: (d.types ?? []).length === 1 }, h("summary", {}, TYPE_LABEL[t] ?? t), h("ul", {}, (d.guidance?.[t] ?? []).map((g) => h("li", {}, g))))))) : null,
