@@ -80,24 +80,25 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 22px; }
 
 /* ---------- Panel lateral del asistente de IA (incidentes y evaluaciones) ---------- */
-.detail-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); gap: 20px; align-items: start; }
+.detail-layout { display: grid; grid-template-columns: minmax(0, 1fr) clamp(380px, 34vw, 540px); gap: 24px; align-items: start; }
 /* minmax(0, …) en las columnas de arriba solo fija el mínimo de la pista; cada celda de la grilla
    necesita además su propio min-width:0, si no, una tabla ancha dentro de un panel puede seguir
    forzando la grilla entera (y con ella toda la página) a desbordarse horizontalmente. */
 .detail-layout > * { min-width: 0; }
-.ai-side { position: sticky; top: 78px; max-height: calc(100vh - 100px); display: flex; min-width: 0; }
-.ai-side > .panel { display: flex; flex-direction: column; min-height: 0; max-height: 100%; width: 100%; }
+.ai-side { position: sticky; top: 78px; height: calc(100vh - 96px); max-height: calc(100vh - 96px); display: flex; min-width: 0; }
+.ai-side > .panel { display: flex; flex-direction: column; min-height: 0; height: 100%; max-height: 100%; width: 100%; }
 .ai-side > .panel > .body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.ai-side .ai-history { flex: 1 1 auto; min-height: 80px; overflow-y: auto; padding-right: 2px; }
-.ai-side textarea { flex: none; }
+.ai-side .ai-history { flex: 1 1 auto; min-height: 160px; overflow-y: auto; padding-right: 2px; }
+.ai-side textarea { flex: none; min-height: 96px; }
 /* Chat de creación (listados de Incidentes/Evaluaciones): la tarjeta de borrador se desplaza aparte,
    con scroll propio, para que el botón de confirmar nunca quede recortado por el panel angosto. */
 .ai-draft:not(:empty) { flex: none; overflow-y: auto; max-height: 42vh; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line, #cfd6de); }
 @media (max-width: 1080px) {
   .detail-layout { grid-template-columns: 1fr; }
-  .ai-side { position: static; max-height: none; }
-  .ai-side > .panel { max-height: none; }
-  .ai-side .ai-history { max-height: 420px; }
+  .ai-side { position: static; height: auto; max-height: none; }
+  .ai-side > .panel { height: auto; max-height: none; }
+  .ai-side .ai-history { flex: none; min-height: 160px; max-height: min(64vh, 640px); }
+  .ai-side textarea { min-height: 110px; }
   .ai-draft:not(:empty) { max-height: none; }
 }
 
