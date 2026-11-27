@@ -354,7 +354,7 @@ export async function incidentView(ctx, id) {
   const aiPanel = () => {
     if (!ctx.aiEnabled) return panel("Asistente de IA", h("div", { class: "body" }, h("p", { class: "muted" }, "El módulo de IA no está activado. Un autorizador puede activarlo en Configuración → Integración IA.")));
     const delegate = h("input", { type: "checkbox" });
-    const q = h("textarea", { rows: 3, placeholder: "Pídele algo, p. ej.: «revisa la evidencia y dime qué hacer» o «genera el plan de contención con los IOCs que ya tenemos».", onkeydown: (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); askAi(q.value, q, delegate.checked); } } });
+    const q = h("textarea", { rows: 3, placeholder: "Pídele algo, p. ej.: «revisa la evidencia y dime qué hacer» o «genera el plan de contención con los IOCs que ya tenemos».", onkeydown: (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } } });
     const send = async () => { const authorized = delegate.checked; delegate.checked = false; await askAi(q.value, q, authorized); };
     return panel("Asistente de IA", h("div", { class: "body stack" },
       h("p", { class: "muted" }, "La IA solo actúa cuando se lo pides. Para que guarde análisis o actualice tipos/herramientas del caso, marca la autorización puntual antes de enviar. No controla cuentas externas ni aplica bloqueos."),
