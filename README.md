@@ -91,6 +91,8 @@ Herramientas MCP: `incident_open` (solo autorizador/operador), `incident_types_s
 
 Una vez marcado un tipo (manual o aceptando la sugerencia), el caso muestra su guía de contención curada ("Opciones de bloqueo") para ese tipo, pensada para que el equipo la ejecute en su propia infraestructura — nunca se aplica desde la plataforma.
 
+**Recuperación supervisada de Facebook.** Al marcar `facebook_account_takeover`, el incidente ofrece un flujo para confirmar el consentimiento del titular, abrir los canales oficiales, recuperar primero el correo o teléfono asociado cuando haga falta y separar la cuenta personal de los activos empresariales. El titular opera Facebook e introduce directamente cualquier contraseña, código, CAPTCHA o documento. La consola no accede a sesiones de Meta ni automatiza la verificación de identidad; Facebook conserva esa decisión. Para activos empresariales, otro administrador legítimo puede revisar permisos y el titular puede contactar el soporte que tenga disponible.
+
 **Exportar a PDF.** Tanto el informe de un incidente (`GET /api/incidents/:id/report?format=pdf`) como la vista previa del informe de una evaluación (`GET /api/assessments/:id/report?format=pdf&includeStates=...`) se pueden descargar en PDF con un clic ("Descargar PDF" en la consola) — útil para entregar a un cliente o adjuntar a una denuncia ante el CSIRT. La descarga de la evaluación es siempre una vista previa: no avanza el ciclo ni reemplaza el "Cerrar informe" (que sigue firmando y cambiando el estado).
 
 ## Cadena de suministro (SBOM + vulnerabilidades conocidas)
@@ -129,3 +131,4 @@ verifique el origen; el secreto se guarda cifrado (AES-256-GCM), igual que la ll
 IA. Hay un botón "Enviar alerta de prueba" para comprobar la entrega sin esperar a un hallazgo
 real. Un fallo o una caída del webhook nunca rompe el flujo principal — solo queda auditado
 (`alert:sent` / `alert:failed`).
+
