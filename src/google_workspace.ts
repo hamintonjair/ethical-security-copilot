@@ -69,8 +69,18 @@ export async function syncGoogleWorkspaceLoginEvents(store: Store, env: GoogleWo
   const url = new URL("https://admin.googleapis.com/admin/reports/v1/activity/users/all/applications/login");
   url.search = new URLSearchParams({ startTime: since, maxResults: "1000" }).toString();
   const response = await fetch(url, { headers: { authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(20_000) });
-  const data = await response.json() as { items?: GoogleActivity[]; error?: { message?: string } };
-  if (!response.ok) throw new Error(response.status === 403 ? "Google rechazó la consulta. Confirma que esta cuenta tenga permisos para ver los informes de auditoría de Workspace." : `Google Reports API devolvió un error (${response.status}).`);
+  const data = await response.json() as { items?: GoogleActivity[]; error?: { message?: string; errors?: Array<{ reason?: string }> } };
+  if (!response.ok) {
+    const reason = data.error?.errors?.[0]?.reason;
+    const detail = (data.error?.message ?? "").replace(/[\\r\\n]+/g, " ").slice(0, 240);
+    if (response.status === 401) {
+      throw new Error(`Google Reports API devolvió 401${detail ? `: ${detail}` : ""}. La autorización guardada no sirve para esta consulta; desconecta y vuelve a conectar la cuenta administradora. Si persiste, revisa que Admin SDK API esté habilitada en el proyecto OAuth.`);
+    }
+    if (response.status === 403 && (reason === "insufficientPermissions" || reason === "forbidden" || !reason)) {
+      throw new Error(`Google rechazó la consulta (403${reason ? `, ${reason}` : ""})${detail ? `: ${detail}` : ""}. Confirma que la cuenta tenga rol de administrador con acceso a informes de auditoría y que Admin SDK API esté habilitada.`);
+    }
+    throw new Error(`Google Reports API devolvió ${response.status}${reason ? ` (${reason})` : ""}${detail ? `: ${detail}` : "."}`);
+  }
   try {
     const count = await store.ingestGoogleWorkspaceLoginActivities(connection.integrationId, data.items ?? []);
     await store.markGoogleWorkspaceSync(connection.integrationId, null);
