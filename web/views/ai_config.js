@@ -83,7 +83,7 @@ function integrationsPanel(initial) {
   const refreshGoogle = async () => { const r = await api("GET", "/api/integrations"); state = r; google = r.googleWorkspace; render(); };
   const renderGoogle = () => {
     googleStatus.textContent = !google.configured
-      ? "Falta configurar las credenciales OAuth de Google en el servidor."
+      ? "La conexión todavía no está habilitada por el administrador de la plataforma. No necesitas configurar Render; avísale al responsable técnico."
       : google.connected ? `Conectada: ${google.email}. Permiso: lectura de auditoría de inicios de sesión.`
         : "Conecta una cuenta administradora de Google Workspace. Solo se solicitará lectura de los registros de auditoría.";
     if (google.lastSyncAt) googleStatus.textContent += ` Última consulta: ${fmtDate(google.lastSyncAt)}.`;
@@ -146,17 +146,19 @@ function integrationsPanel(initial) {
     h("p", { class: "muted" }, "Entrada segura para alertas de EDR, correo, identidad, firewall, nube y bases de datos. Esta base recibe eventos normalizados y los registra; los conectores nativos de cada proveedor se incorporan por separado."),
     panel("Google Workspace · accesos e inicios de sesión", h("div", { class: "body stack" },
       h("p", { class: "muted" }, "Consulta eventos de inicio de sesión del dominio con Google Admin Reports. No conecta buzones personales @gmail.com ni permite bloquear accesos. La primera versión consulta los registros cuando pulsas «Actualizar eventos»."),
-      panel("Antes de conectar: prepara Google y el servidor", h("div", { class: "body stack" },
+      panel("Para clientes: conecta la cuenta de tu empresa", h("div", { class: "body stack" },
+        h("p", {}, "Cuando el administrador técnico habilite el conector, solo necesitas pulsar «Conectar con Google Workspace» e iniciar sesión con una cuenta administradora de tu dominio para autorizar la lectura de auditoría."),
+        h("p", { class: "hint" }, "Se consultan únicamente registros de acceso; no se leen mensajes ni se cambian cuentas. No funciona con una cuenta personal @gmail.com."))),
+      h("details", {}, h("summary", {}, "Configuración inicial (solo administrador técnico, una vez por plataforma)"),
+      h("div", { class: "body stack" },
+        h("p", { class: "muted" }, "Estos pasos son para quien administra y despliega Ethical Security Copilot. El cliente no debe entrar a Render ni crear credenciales para esta aplicación."),
         h("ol", {},
-          h("li", {}, "En ", h("a", { href: "https://console.cloud.google.com/", target: "_blank", rel: "noopener noreferrer" }, "Google Cloud Console"), " crea o elige un proyecto y habilita ", h("a", { href: "https://console.cloud.google.com/apis/library/admin.googleapis.com", target: "_blank", rel: "noopener noreferrer" }, "Admin SDK API"), "."),
-          h("li", {}, "Configura la pantalla de consentimiento OAuth. Si la aplicación está en modo de prueba, agrega como usuario de prueba la cuenta administradora que autorizará la conexión."),
-          h("li", {}, "Crea un ID de cliente OAuth de tipo ", h("strong", {}, "Aplicación web"), ". En «URIs de redirección autorizados», agrega exactamente esta dirección:"),
-          h("li", {}, "En Render → Environment, guarda el ID y el secreto OAuth junto con la misma URI de redirección. El secreto debe permanecer privado en Render.")),
+          h("li", {}, "En ", h("a", { href: "https://console.cloud.google.com/", target: "_blank", rel: "noopener noreferrer" }, "Google Cloud Console"), " crea el proyecto de la plataforma, habilita ", h("a", { href: "https://console.cloud.google.com/apis/library/admin.googleapis.com", target: "_blank", rel: "noopener noreferrer" }, "Admin SDK API"), " y configura el consentimiento OAuth para que los dominios de clientes puedan autorizar el conector."),
+          h("li", {}, "Crea un cliente OAuth de tipo ", h("strong", {}, "Aplicación web"), " y registra esta URI como redirección autorizada:"),
+          h("li", {}, "Una sola vez, guarda el ID, secreto y URI en las variables privadas del servicio desplegado. No entregues el secreto a los clientes.")),
         h("p", {}, h("strong", {}, "URI de redirección para este servicio")),
         h("div", { class: "row" }, h("code", {}, googleRedirectUri), h("button", { class: "btn small", type: "button", onclick: async () => { try { await navigator.clipboard.writeText(googleRedirectUri); toast("URI copiada."); } catch { googleFeedback.textContent = `Copia esta URI: ${googleRedirectUri}`; googleFeedback.className = "muted"; } } }, "Copiar URI")),
-        h("p", { class: "hint" }, "Variables privadas de Render: GOOGLE_WORKSPACE_CLIENT_ID, GOOGLE_WORKSPACE_CLIENT_SECRET y GOOGLE_WORKSPACE_REDIRECT_URI. Esta última debe coincidir exactamente con la URI registrada arriba."),
-        h("p", { class: "hint" }, "Necesitas una cuenta de Google Workspace de un dominio administrado y permisos para consultar los registros de auditoría. Las cuentas personales @gmail.com no tienen estos registros. La conexión solo solicita lectura de auditoría; no accede al correo ni cambia cuentas."),
-        h("p", { class: "hint" }, "Después de completar la configuración, pulsa «Conectar con Google Workspace» y autoriza la cuenta administradora. Luego puedes pulsar «Actualizar eventos» para importar los registros recientes."))),
+        h("p", { class: "hint" }, "Variables privadas del servicio: GOOGLE_WORKSPACE_CLIENT_ID, GOOGLE_WORKSPACE_CLIENT_SECRET y GOOGLE_WORKSPACE_REDIRECT_URI. El secreto solo se guarda en el servidor; cada cliente autoriza después su propio dominio con una cuenta administradora."))),
       googleStatus, googleFeedback, googleControls)),
     h("div", { class: "row" }, name, provider, h("button", { class: "btn primary", onclick: create }, "Añadir fuente")),
     h("details", {}, h("summary", {}, "Formato de evento esperado"), h("p", {}, "La petición debe ser POST application/json y estar firmada con HMAC-SHA256. El identificador del evento debe ser único por fuente para evitar duplicados."), h("pre", {}, example)),
