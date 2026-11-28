@@ -146,6 +146,10 @@ function integrationsPanel(initial) {
     panel("Google Workspace · accesos e inicios de sesión", h("div", { class: "body stack" },
       h("p", { class: "muted" }, "Conecta una cuenta administradora de Google Workspace para consultar los registros de acceso. Solo se solicitará autorización de lectura; no accede al contenido de Gmail ni modifica cuentas. No funciona con Gmail personal."),
       googleStatus, googleFeedback, googleControls)),
+    panel("Cuenta Google personal · revisar seguridad", h("div", { class: "body stack" },
+      h("p", { class: "muted" }, "Las cuentas Gmail personales no ofrecen a esta plataforma un registro API de inicios de sesión. Revisa actividad reciente, dispositivos y alertas directamente en la página oficial de Seguridad de Google."),
+      h("a", { class: "btn", href: "https://myaccount.google.com/security", target: "_blank", rel: "noopener noreferrer" }, "Abrir Seguridad de la cuenta de Google"),
+      h("p", { class: "hint" }, "Si recibiste una alerta o encuentras actividad sospechosa, cambia la contraseña desde Google, cierra sesiones desconocidas y activa la verificación en dos pasos. La plataforma no pide tu contraseña ni códigos."))),
     h("div", { class: "row" }, name, provider, h("button", { class: "btn primary", onclick: create }, "Añadir fuente")),
     h("details", {}, h("summary", {}, "Formato de evento esperado"), h("p", {}, "La petición debe ser POST application/json y estar firmada con HMAC-SHA256. El identificador del evento debe ser único por fuente para evitar duplicados."), h("pre", {}, example)),
     message, list, h("h3", {}, "Eventos recibidos"), events));
